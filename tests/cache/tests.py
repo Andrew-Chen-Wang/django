@@ -15,8 +15,6 @@ import unittest
 from pathlib import Path
 from unittest import mock, skipIf
 
-from asgiref.sync import async_to_sync, sync_to_async
-
 from django.conf import settings
 from django.core import management, signals
 from django.core.cache import (
@@ -36,8 +34,8 @@ from django.template import engines
 from django.template.context_processors import csrf
 from django.template.response import TemplateResponse
 from django.test import (
-    AsyncRequestFactory, RequestFactory, SimpleTestCase, TestCase,
-    TransactionTestCase, override_settings,
+    RequestFactory, SimpleTestCase, TestCase, TransactionTestCase,
+    override_settings,
 )
 from django.test.signals import setting_changed
 from django.utils import timezone, translation
