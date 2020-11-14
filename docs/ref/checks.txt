@@ -138,6 +138,12 @@ configured:
 
 * **caches.E001**: You must define a ``'default'`` cache in your
   :setting:`CACHES` setting.
+* **caches.W002**: Your ``<cache>`` configuration might expose your cache or
+  lead to corruption of your data because its
+  :setting:`LOCATION <CACHES-LOCATION>` matches/is inside/contains
+  :setting:`MEDIA_ROOT`/:setting:`STATIC_ROOT`/:setting:`STATICFILES_DIRS`.
+* **caches.W003**: Your ``<cache>`` cache :setting:`LOCATION <CACHES-LOCATION>`
+  is relative. Use an absolute path instead.
 
 Database
 --------
@@ -431,10 +437,11 @@ The following checks are run if you use the :option:`check --deploy` option:
   ``True``. Unless your site should be available over both SSL and non-SSL
   connections, you may want to either set this setting to ``True`` or configure
   a load balancer or reverse-proxy server  to redirect all connections to HTTPS.
-* **security.W009**: Your :setting:`SECRET_KEY` has less than 50 characters or
-  less than 5 unique characters. Please generate a long and random
-  ``SECRET_KEY``, otherwise many of Django's security-critical features will be
-  vulnerable to attack.
+* **security.W009**: Your :setting:`SECRET_KEY` has less than 50 characters,
+  less than 5 unique characters, or it's prefixed with ``'django-insecure-'``
+  indicating that it was generated automatically by Django. Please generate a
+  long and random ``SECRET_KEY``, otherwise many of Django's security-critical
+  features will be vulnerable to attack.
 * **security.W010**: You have :mod:`django.contrib.sessions` in your
   :setting:`INSTALLED_APPS` but you have not set
   :setting:`SESSION_COOKIE_SECURE` to ``True``. Using a secure-only session
@@ -589,10 +596,10 @@ with the admin site:
 * **admin.E016**: The value of ``form`` must inherit from ``BaseModelForm``.
 * **admin.E017**: The value of ``filter_vertical`` must be a list or tuple.
 * **admin.E018**: The value of ``filter_horizontal`` must be a list or tuple.
-* **admin.E019**: The value of ``filter_vertical[n]/filter_vertical[n]`` refers
-  to ``<field name>``, which is not an attribute of ``<model>``.
-* **admin.E020**: The value of ``filter_vertical[n]/filter_vertical[n]`` must
-  be a many-to-many field.
+* **admin.E019**: The value of ``filter_vertical[n]/filter_horizontal[n]``
+  refers to ``<field name>``, which is not an attribute of ``<model>``.
+* **admin.E020**: The value of ``filter_vertical[n]/filter_horizontal[n]``
+  must be a many-to-many field.
 * **admin.E021**: The value of ``radio_fields`` must be a dictionary.
 * **admin.E022**: The value of ``radio_fields`` refers to ``<field name>``,
   which is not an attribute of ``<model>``.

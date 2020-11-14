@@ -355,7 +355,7 @@ class TestQuerying(TestCase):
             operator.itemgetter('key', 'count'),
         )
 
-    @skipIf(connection.vendor == 'oracle', "Oracle doesn't support grouping by LOBs, see #24096.")
+    @skipUnlessDBFeature('allows_group_by_lob')
     def test_ordering_grouping_by_count(self):
         qs = NullableJSONModel.objects.filter(
             value__isnull=False,
@@ -405,6 +405,18 @@ class TestQuerying(TestCase):
                 chain=KeyTransform('f', KeyTransform('1', 'key')),
                 expr=KeyTransform('f', KeyTransform('1', Cast('key', models.JSONField()))),
             ).filter(chain=F('expr')),
+            [self.objs[4]],
+        )
+
+    def test_nested_key_transform_on_subquery(self):
+        self.assertSequenceEqual(
+            NullableJSONModel.objects.filter(value__d__0__isnull=False).annotate(
+                subquery_value=Subquery(
+                    NullableJSONModel.objects.filter(pk=OuterRef('pk')).values('value')
+                ),
+                key=KeyTransform('d', 'subquery_value'),
+                chain=KeyTransform('f', KeyTransform('1', 'key')),
+            ).filter(chain='g'),
             [self.objs[4]],
         )
 

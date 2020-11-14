@@ -131,9 +131,17 @@ Minor features
 * The new :attr:`.JSONBAgg.ordering` attribute determines the ordering of the
   aggregated elements.
 
+* The new :attr:`.JSONBAgg.distinct` attribute determines if aggregated values
+  will be distinct.
+
 * The :class:`~django.contrib.postgres.operations.CreateExtension` operation
   now checks that the extension already exists in the database and skips the
   migration if so.
+
+* The new :class:`~django.contrib.postgres.operations.CreateCollation` and
+  :class:`~django.contrib.postgres.operations.RemoveCollation` operations
+  allow creating and dropping collations on PostgreSQL. See
+  :ref:`manage-postgresql-collations` for more details.
 
 :mod:`django.contrib.redirects`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -180,6 +188,13 @@ CSRF
 
 * ...
 
+Decorators
+~~~~~~~~~~
+
+* The new :func:`~django.views.decorators.common.no_append_slash` decorator
+  allows individual views to be excluded from :setting:`APPEND_SLASH` URL
+  normalization.
+
 Email
 ~~~~~
 
@@ -218,6 +233,12 @@ Forms
   removal of the option to delete extra forms. See
   :attr:`~.BaseFormSet.can_delete_extra` for more information.
 
+* :class:`~django.forms.formsets.BaseFormSet` now reports a user facing error,
+  rather than raising an exception, when the management form is missing or has
+  been tampered with. To customize this error message, pass the
+  ``error_messages`` argument with the key ``'missing_management_form'`` when
+  instantiating the formset.
+
 Generic Views
 ~~~~~~~~~~~~~
 
@@ -250,6 +271,11 @@ Management Commands
   tags. System checks registered in the chosen tags will be checked for errors
   prior to executing the command. In previous versions, either all or none
   of the system checks were performed.
+
+* Support for colored terminal output on Windows is updated. Various modern
+  terminal environments are automatically detected, and the options for
+  enabling support in other cases are improved. See :ref:`syntax-coloring` for
+  more details.
 
 Migrations
 ~~~~~~~~~~
@@ -290,7 +316,7 @@ Models
 * :class:`Value() <django.db.models.Value>` expression now
   automatically resolves its ``output_field`` to the appropriate
   :class:`Field <django.db.models.Field>` subclass based on the type of
-  it's provided ``value`` for :py:class:`bool`, :py:class:`bytes`,
+  its provided ``value`` for :py:class:`bool`, :py:class:`bytes`,
   :py:class:`float`, :py:class:`int`, :py:class:`str`,
   :py:class:`datetime.date`, :py:class:`datetime.datetime`,
   :py:class:`datetime.time`, :py:class:`datetime.timedelta`,
@@ -373,6 +399,9 @@ Templates
 * :tfilter:`floatformat` template filter now allows using the ``g`` suffix to
   force grouping by the :setting:`THOUSAND_SEPARATOR` for the active locale.
 
+* Templates cached with :ref:`Cached template loaders<template-loaders>` are
+  now correctly reloaded in development.
+
 Tests
 ~~~~~
 
@@ -397,6 +426,11 @@ Tests
   functions passed to :func:`transaction.on_commit()
   <django.db.transaction.on_commit>` in a list. This allows you to test such
   callbacks without using the slower :class:`.TransactionTestCase`.
+
+* :meth:`.TransactionTestCase.assertQuerysetEqual` now supports direct
+  comparison against another queryset rather than being restricted to
+  comparison against a list of string representations of objects when using the
+  default value for the ``transform`` argument.
 
 URLs
 ~~~~
@@ -465,6 +499,12 @@ backends.
   ``DatabaseOperations.time_trunc_sql()`` now take the optional ``tzname``
   argument in order to truncate in a specific timezone.
 
+* ``DatabaseClient.runshell()`` now gets arguments and an optional dictionary
+  with environment variables to the underlying command-line client from
+  ``DatabaseClient.settings_to_cmd_args_env()`` method. Third-party database
+  backends must implement ``DatabaseClient.settings_to_cmd_args_env()`` or
+  override ``DatabaseClient.runshell()``.
+
 :mod:`django.contrib.admin`
 ---------------------------
 
@@ -475,6 +515,11 @@ backends.
 -------------------------
 
 * Support for PostGIS 2.2 is removed.
+
+* The Oracle backend now clones polygons (and geometry collections containing
+  polygons) before reorienting them and saving them to the database. They are
+  no longer mutated in place. You might notice this if you use the polygons
+  after a model is saved.
 
 Dropped support for PostgreSQL 9.5
 ----------------------------------
@@ -552,6 +597,13 @@ Miscellaneous
   ``False`` if the file cannot be locked, instead of raising
   :exc:`BlockingIOError`.
 
+* The password reset mechanism now invalidates tokens when the user email is
+  changed.
+
+* :djadmin:`makemessages` command no longer processes invalid locales specified
+  using :option:`makemessages --locale` option, when they contain hyphens
+  (``'-'``).
+
 .. _deprecated-features-3.2:
 
 Features deprecated in 3.2
@@ -577,3 +629,8 @@ Miscellaneous
 * The ``default_app_config`` application configuration variable is deprecated,
   due to the now automatic ``AppConfig`` discovery. See :ref:`whats-new-3.2`
   for more details.
+
+* Automatically calling ``repr()`` on a queryset in
+  ``TransactionTestCase.assertQuerysetEqual()``, when compared to string
+  values, is deprecated. If you need the previous behavior, explicitly set
+  ``transform`` to ``repr``.

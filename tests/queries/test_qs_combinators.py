@@ -106,6 +106,11 @@ class QuerySetSetOperationTests(TestCase):
         self.assertEqual(len(qs2.union(qs2)), 0)
         self.assertEqual(len(qs3.union(qs3)), 0)
 
+    def test_empty_qs_union_with_ordered_qs(self):
+        qs1 = Number.objects.all().order_by('num')
+        qs2 = Number.objects.none().union(qs1).order_by('num')
+        self.assertEqual(list(qs1), list(qs2))
+
     def test_limits(self):
         qs1 = Number.objects.all()
         qs2 = Number.objects.all()
@@ -205,6 +210,28 @@ class QuerySetSetOperationTests(TestCase):
         ):
             with self.subTest(qs=qs):
                 self.assertEqual(list(qs), expected_result)
+
+    def test_union_with_values_list_and_order_on_annotation(self):
+        qs1 = Number.objects.annotate(
+            annotation=Value(-1),
+            multiplier=F('annotation'),
+        ).filter(num__gte=6)
+        qs2 = Number.objects.annotate(
+            annotation=Value(2),
+            multiplier=F('annotation'),
+        ).filter(num__lte=5)
+        self.assertSequenceEqual(
+            qs1.union(qs2).order_by('annotation', 'num').values_list('num', flat=True),
+            [6, 7, 8, 9, 0, 1, 2, 3, 4, 5],
+        )
+        self.assertQuerysetEqual(
+            qs1.union(qs2).order_by(
+                F('annotation') * F('multiplier'),
+                'num',
+            ).values('num'),
+            [6, 7, 8, 9, 0, 1, 2, 3, 4, 5],
+            operator.itemgetter('num'),
+        )
 
     def test_count_union(self):
         qs1 = Number.objects.filter(num__lte=1).values('num')

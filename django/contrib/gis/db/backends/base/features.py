@@ -14,6 +14,8 @@ class BaseSpatialFeatures:
     # Does the backend introspect GeometryField to its subtypes?
     supports_geometry_field_introspection = True
 
+    # Does the database have a geography type?
+    supports_geography = False
     # Does the backend support storing 3D geometries?
     supports_3d_storage = False
     # Reference implementation of 3D functions is:
@@ -45,6 +47,12 @@ class BaseSpatialFeatures:
 
     # Does the database support a unique index on geometry fields?
     supports_geometry_field_unique_index = True
+
+    # Can SchemaEditor alter geometry fields?
+    can_alter_geometry_field = True
+
+    # Set of options that AsGeoJSON() doesn't support.
+    unsupported_geojson_options = {}
 
     @property
     def supports_bbcontains_lookup(self):

@@ -4,6 +4,8 @@ from django.utils.functional import cached_property
 
 class BaseDatabaseFeatures:
     gis_enabled = False
+    # Oracle can't group by LOB (large object) data types.
+    allows_group_by_lob = True
     allows_group_by_pk = False
     allows_group_by_selected_pks = False
     empty_fetchmany_value = []
@@ -171,6 +173,9 @@ class BaseDatabaseFeatures:
 
     # Can it create foreign key constraints inline when adding columns?
     can_create_inline_fk = True
+
+    # Does it automatically index foreign keys?
+    indexes_foreign_keys = True
 
     # Does it support CHECK constraints?
     supports_column_check_constraints = True

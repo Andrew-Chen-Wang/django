@@ -592,15 +592,15 @@ class BaseCacheTests:
     def test_touch(self):
         # cache.touch() updates the timeout.
         cache.set('expire1', 'very quickly', timeout=1)
-        self.assertIs(cache.touch('expire1', timeout=2), True)
-        time.sleep(1.0)
+        self.assertIs(cache.touch('expire1', timeout=4), True)
+        time.sleep(2)
         self.assertIs(cache.has_key('expire1'), True)
-        time.sleep(1.5)
+        time.sleep(3)
         self.assertIs(cache.has_key('expire1'), False)
         # cache.touch() works without the timeout argument.
         cache.set('expire1', 'very quickly', timeout=1)
         self.assertIs(cache.touch('expire1'), True)
-        time.sleep(1.5)
+        time.sleep(2)
         self.assertIs(cache.has_key('expire1'), True)
 
         self.assertIs(cache.touch('nonexistent'), False)
@@ -1866,7 +1866,7 @@ class CacheUtils(SimpleTestCase):
     def _get_request_cache(self, method='GET', query_string=None, update_cache=None):
         request = self._get_request(self.host, self.path,
                                     method, query_string=query_string)
-        request._cache_update_cache = True if not update_cache else update_cache
+        request._cache_update_cache = update_cache if update_cache else True
         return request
 
     def test_patch_vary_headers(self):
