@@ -842,6 +842,12 @@ It's the number of seconds the value should be stored in the cache. Passing in
 ``None`` for ``timeout`` will cache the value forever. A ``timeout`` of ``0``
 won't cache the value.
 
+.. note::
+
+    Asynchronous methods are prefixed with "a" and its synchronous variant's
+    method name like ``cache.aget('key')``. See `Asynchronous support`_
+    for an example and explanation.
+
 If the object doesn't exist in the cache, ``cache.get()`` returns ``None``::
 
     >>> # Wait 30 seconds for 'my_key' to expire...
@@ -998,6 +1004,26 @@ the cache backend.
 .. note::
 
     For caches that don't implement ``close`` methods it is a no-op.
+
+.. _asynchronous_support:
+
+Asynchronous support
+--------------------
+
+To prevent confusion between synchronous and asynchronous naming, all
+asynchronous methods of a cache interface is its synchronous variant's
+name with the prefix "a". By default, the arguments for both variants
+are the same.
+
+    >>> await cache.aset('num', 1)
+    >>> await cache.ahas_key('num')
+    True
+
+Note that you should call the async methods if your view is in an async
+context. Any helper function called within your async view should be a
+coroutine so that the call to your ``cache`` is not skipped and properly
+responds, even if the latency between your server and your cache instance
+is extremely low.
 
 .. _cache_key_prefixing:
 
