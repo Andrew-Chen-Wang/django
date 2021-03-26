@@ -181,7 +181,8 @@ Minor features
 Cache
 ~~~~~
 
-* ...
+* Added async methods for :class:`~django.core.cache.backends.base.BaseCache`.
+  All async methods have the "a" prefix and the action's name like ``aget``.
 
 CSRF
 ~~~~
