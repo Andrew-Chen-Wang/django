@@ -88,8 +88,8 @@ class DummyCacheTests(SimpleTestCase):
 
     async def test_simple_async(self):
         "Dummy cache backend ignores cache set calls"
-        await cache.set_async("key", "value")
-        self.assertIsNone(await cache.get_async("key"))
+        await cache.aset("key", "value")
+        self.assertIsNone(await cache.aget("key"))
 
     def test_add(self):
         "Add doesn't do anything in dummy cache backend"
@@ -97,11 +97,11 @@ class DummyCacheTests(SimpleTestCase):
         self.assertIs(cache.add("addkey1", "newvalue"), True)
         self.assertIsNone(cache.get("addkey1"))
 
-    async def test_add_async(self):
+    async def test_aadd(self):
         "Add doesn't do anything in dummy cache backend"
-        self.assertIs(await cache.add_async("addkey1", "value"), True)
-        self.assertIs(await cache.add_async("addkey1", "newvalue"), True)
-        self.assertIsNone(await cache.get_async("addkey1"))
+        self.assertIs(await cache.aadd("addkey1", "value"), True)
+        self.assertIs(await cache.aadd("addkey1", "newvalue"), True)
+        self.assertIsNone(await cache.aget("addkey1"))
 
     def test_non_existent(self):
         "Nonexistent keys aren't found in the dummy cache backend"
@@ -110,8 +110,8 @@ class DummyCacheTests(SimpleTestCase):
 
     async def test_non_existent_async(self):
         "Nonexistent keys aren't found in the dummy cache backend"
-        self.assertIsNone(await cache.get_async("does_not_exist"))
-        self.assertEqual(await cache.get_async("does_not_exist", "bang!"), "bang!")
+        self.assertIsNone(await cache.aget("does_not_exist"))
+        self.assertEqual(await cache.aget("does_not_exist", "bang!"), "bang!")
 
     def test_get_many(self):
         "get_many returns nothing for the dummy cache backend"
@@ -119,21 +119,21 @@ class DummyCacheTests(SimpleTestCase):
         self.assertEqual(cache.get_many(['a', 'c', 'd']), {})
         self.assertEqual(cache.get_many(['a', 'b', 'e']), {})
 
-    async def test_get_many_async(self):
+    async def test_aget_many(self):
         "get_many returns nothing for the dummy cache backend"
-        await cache.set_many_async({'a': 'a', 'b': 'b', 'c': 'c', 'd': 'd'})
-        self.assertEqual(await cache.get_many_async(['a', 'c', 'd']), {})
-        self.assertEqual(await cache.get_many_async(['a', 'b', 'e']), {})
+        await cache.aset_many({'a': 'a', 'b': 'b', 'c': 'c', 'd': 'd'})
+        self.assertEqual(await cache.aget_many(['a', 'c', 'd']), {})
+        self.assertEqual(await cache.aget_many(['a', 'b', 'e']), {})
 
     def test_get_many_invalid_key(self):
         msg = KEY_ERRORS_WITH_MEMCACHED_MSG % ':1:key with spaces'
         with self.assertWarnsMessage(CacheKeyWarning, msg):
             cache.get_many(['key with spaces'])
 
-    async def test_get_many_invalid_key_async(self):
+    async def test_aget_many_invalid_key(self):
         msg = KEY_ERRORS_WITH_MEMCACHED_MSG % ':1:key with spaces'
         with self.assertWarnsMessage(CacheKeyWarning, msg):
-            await cache.get_many_async(['key with spaces'])
+            await cache.aget_many(['key with spaces'])
 
     def test_delete(self):
         "Cache deletion is transparently ignored on the dummy cache backend"
@@ -143,13 +143,13 @@ class DummyCacheTests(SimpleTestCase):
         self.assertIsNone(cache.get("key1"))
         self.assertIsNone(cache.get("key2"))
 
-    async def test_delete_async(self):
+    async def test_adelete(self):
         "Cache deletion is transparently ignored on the dummy cache backend"
-        await cache.set_many_async({'key1': 'spam', 'key2': 'eggs'})
-        self.assertIsNone(await cache.get_async("key1"))
-        self.assertIs(await cache.delete_async("key1"), False)
-        self.assertIsNone(await cache.get_async("key1"))
-        self.assertIsNone(await cache.get_async("key2"))
+        await cache.aset_many({'key1': 'spam', 'key2': 'eggs'})
+        self.assertIsNone(await cache.aget("key1"))
+        self.assertIs(await cache.adelete("key1"), False)
+        self.assertIsNone(await cache.aget("key1"))
+        self.assertIsNone(await cache.aget("key2"))
 
     def test_has_key(self):
         "The has_key method doesn't ever return True for the dummy cache backend"
@@ -157,11 +157,11 @@ class DummyCacheTests(SimpleTestCase):
         self.assertIs(cache.has_key("hello1"), False)
         self.assertIs(cache.has_key("goodbye1"), False)
 
-    async def test_has_key_async(self):
+    async def test_ahas_key(self):
         "The has_key method doesn't ever return True for the dummy cache backend"
-        await cache.set_async("hello1", "goodbye1")
-        self.assertIs(await cache.has_key_async("hello1"), False)
-        self.assertIs(await cache.has_key_async("goodbye1"), False)
+        await cache.aset("hello1", "goodbye1")
+        self.assertIs(await cache.ahas_key("hello1"), False)
+        self.assertIs(await cache.ahas_key("goodbye1"), False)
 
     def test_in(self):
         "The in operator doesn't ever return True for the dummy cache backend"
@@ -177,13 +177,13 @@ class DummyCacheTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             cache.incr('does_not_exist')
 
-    async def test_incr_async(self):
+    async def test_aincr(self):
         "Dummy cache values can't be incremented"
-        await cache.set_async('answer', 42)
+        await cache.aset('answer', 42)
         with self.assertRaises(ValueError):
-            await cache.incr_async('answer')
+            await cache.aincr('answer')
         with self.assertRaises(ValueError):
-            await cache.incr_async('does_not_exist')
+            await cache.aincr('does_not_exist')
 
     def test_decr(self):
         "Dummy cache values can't be decremented"
@@ -193,21 +193,21 @@ class DummyCacheTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             cache.decr('does_not_exist')
 
-    async def test_decr_async(self):
+    async def test_adecr(self):
         "Dummy cache values can't be decremented"
-        await cache.set_async('answer', 42)
+        await cache.aset('answer', 42)
         with self.assertRaises(ValueError):
-            await cache.decr_async('answer')
+            await cache.adecr('answer')
         with self.assertRaises(ValueError):
-            await cache.decr_async('does_not_exist')
+            await cache.adecr('does_not_exist')
 
     def test_touch(self):
         """Dummy cache can't do touch()."""
         self.assertIs(cache.touch('whatever'), False)
 
-    async def test_touch_async(self):
+    async def test_atouch(self):
         """Dummy cache can't do touch()."""
-        self.assertIs(await cache.touch_async('whatever'), False)
+        self.assertIs(await cache.atouch('whatever'), False)
 
     def test_data_types(self):
         "All data types are ignored equally by the dummy cache"
@@ -234,8 +234,8 @@ class DummyCacheTests(SimpleTestCase):
             'function': f,
             'class': C,
         }
-        await cache.set_async("stuff", stuff)
-        self.assertIsNone(await cache.get_async("stuff"))
+        await cache.aset("stuff", stuff)
+        self.assertIsNone(await cache.aget("stuff"))
 
     def test_expiration(self):
         "Expiration has no effect on the dummy cache"
@@ -252,16 +252,16 @@ class DummyCacheTests(SimpleTestCase):
 
     async def test_expiration_async(self):
         "Expiration has no effect on the dummy cache"
-        await cache.set_async('expire1', 'very quickly', 1)
-        await cache.set_async('expire2', 'very quickly', 1)
-        await cache.set_async('expire3', 'very quickly', 1)
+        await cache.aset('expire1', 'very quickly', 1)
+        await cache.aset('expire2', 'very quickly', 1)
+        await cache.aset('expire3', 'very quickly', 1)
 
         await asyncio.sleep(2)
-        self.assertIsNone(await cache.get_async("expire1"))
+        self.assertIsNone(await cache.aget("expire1"))
 
-        self.assertIs(await cache.add_async("expire2", "newvalue"), True)
-        self.assertIsNone(await cache.get_async("expire2"))
-        self.assertIs(await cache.has_key_async("expire3"), False)
+        self.assertIs(await cache.aadd("expire2", "newvalue"), True)
+        self.assertIsNone(await cache.aget("expire2"))
+        self.assertIs(await cache.ahas_key("expire3"), False)
 
     def test_unicode(self):
         "Unicode values are ignored by the dummy cache"
@@ -286,54 +286,54 @@ class DummyCacheTests(SimpleTestCase):
         }
         for (key, value) in stuff.items():
             with self.subTest(key=key):
-                await cache.set_async(key, value)
-                self.assertIsNone(await cache.get_async(key))
+                await cache.aset(key, value)
+                self.assertIsNone(await cache.aget(key))
 
     def test_set_many(self):
         "set_many does nothing for the dummy cache backend"
         self.assertEqual(cache.set_many({'a': 1, 'b': 2}), [])
         self.assertEqual(cache.set_many({'a': 1, 'b': 2}, timeout=2, version='1'), [])
 
-    async def test_set_many_async(self):
+    async def test_aset_many(self):
         "set_many does nothing for the dummy cache backend"
-        self.assertEqual(await cache.set_many_async({'a': 1, 'b': 2}), [])
-        self.assertEqual(await cache.set_many_async({'a': 1, 'b': 2}, timeout=2, version='1'), [])
+        self.assertEqual(await cache.aset_many({'a': 1, 'b': 2}), [])
+        self.assertEqual(await cache.aset_many({'a': 1, 'b': 2}, timeout=2, version='1'), [])
 
     def test_set_many_invalid_key(self):
         msg = KEY_ERRORS_WITH_MEMCACHED_MSG % ':1:key with spaces'
         with self.assertWarnsMessage(CacheKeyWarning, msg):
             cache.set_many({'key with spaces': 'foo'})
 
-    async def test_set_many_invalid_key_async(self):
+    async def test_aset_many_invalid_key(self):
         msg = KEY_ERRORS_WITH_MEMCACHED_MSG % ':1:key with spaces'
         with self.assertWarnsMessage(CacheKeyWarning, msg):
-            await cache.set_many_async({'key with spaces': 'foo'})
+            await cache.aset_many({'key with spaces': 'foo'})
 
     def test_delete_many(self):
         "delete_many does nothing for the dummy cache backend"
         cache.delete_many(['a', 'b'])
 
-    async def test_delete_many_async(self):
+    async def test_adelete_many(self):
         "delete_many does nothing for the dummy cache backend"
-        await cache.delete_many_async(['a', 'b'])
+        await cache.adelete_many(['a', 'b'])
 
     def test_delete_many_invalid_key(self):
         msg = KEY_ERRORS_WITH_MEMCACHED_MSG % ':1:key with spaces'
         with self.assertWarnsMessage(CacheKeyWarning, msg):
             cache.delete_many({'key with spaces': 'foo'})
 
-    async def test_delete_many_invalid_key_async(self):
+    async def test_adelete_many_invalid_key(self):
         msg = KEY_ERRORS_WITH_MEMCACHED_MSG % ':1:key with spaces'
         with self.assertWarnsMessage(CacheKeyWarning, msg):
-            await cache.delete_many_async({'key with spaces': 'foo'})
+            await cache.adelete_many({'key with spaces': 'foo'})
 
     def test_clear(self):
         "clear does nothing for the dummy cache backend"
         cache.clear()
 
-    async def test_clear_async(self):
+    async def test_aclear(self):
         "clear does nothing for the dummy cache backend"
-        await cache.clear_async()
+        await cache.aclear()
 
     def test_incr_version(self):
         "Dummy cache versions can't be incremented"
@@ -345,11 +345,11 @@ class DummyCacheTests(SimpleTestCase):
 
     async def test_incr_version_async(self):
         "Dummy cache versions can't be incremented"
-        await cache.set_async('answer', 42)
+        await cache.aset('answer', 42)
         with self.assertRaises(ValueError):
-            await cache.incr_version_async('answer')
+            await cache.aincr_version('answer')
         with self.assertRaises(ValueError):
-            await cache.incr_version_async('does_not_exist')
+            await cache.aincr_version('does_not_exist')
 
     def test_decr_version(self):
         "Dummy cache versions can't be decremented"
@@ -361,19 +361,19 @@ class DummyCacheTests(SimpleTestCase):
 
     async def test_decr_version_async(self):
         "Dummy cache versions can't be decremented"
-        await cache.set_async('answer', 42)
+        await cache.aset('answer', 42)
         with self.assertRaises(ValueError):
-            await cache.decr_version_async('answer')
+            await cache.adecr_version('answer')
         with self.assertRaises(ValueError):
-            await cache.decr_version_async('does_not_exist')
+            await cache.adecr_version('does_not_exist')
 
     def test_get_or_set(self):
         self.assertEqual(cache.get_or_set('mykey', 'default'), 'default')
         self.assertIsNone(cache.get_or_set('mykey', None))
 
     async def test_get_or_set_async(self):
-        self.assertEqual(await cache.get_or_set_async('mykey', 'default'), 'default')
-        self.assertIsNone(await cache.get_or_set_async('mykey', None))
+        self.assertEqual(await cache.aget_or_set('mykey', 'default'), 'default')
+        self.assertIsNone(await cache.aget_or_set('mykey', None))
 
     def test_get_or_set_callable(self):
         def my_callable():
@@ -386,8 +386,8 @@ class DummyCacheTests(SimpleTestCase):
         def my_callable():
             return 'default'
 
-        self.assertEqual(await cache.get_or_set_async('mykey', my_callable), 'default')
-        self.assertEqual(await cache.get_or_set_async('mykey', my_callable()), 'default')
+        self.assertEqual(await cache.aget_or_set('mykey', my_callable), 'default')
+        self.assertEqual(await cache.aget_or_set('mykey', my_callable()), 'default')
 
 
 def custom_key_func(key, key_prefix, version):

@@ -115,7 +115,7 @@ class BaseCache:
         """
         raise NotImplementedError('subclasses of BaseCache must provide an add() method')
 
-    add_async = sync_to_async(add, thread_sensitive=True)
+    aadd = sync_to_async(add, thread_sensitive=True)
 
     def get(self, key, default=None, version=None):
         """
@@ -124,7 +124,7 @@ class BaseCache:
         """
         raise NotImplementedError('subclasses of BaseCache must provide a get() method')
 
-    get_async = sync_to_async(get, thread_sensitive=True)
+    aget = sync_to_async(get, thread_sensitive=True)
 
     def set(self, key, value, timeout=DEFAULT_TIMEOUT, version=None):
         """
@@ -133,7 +133,7 @@ class BaseCache:
         """
         raise NotImplementedError('subclasses of BaseCache must provide a set() method')
 
-    set_async = sync_to_async(set, thread_sensitive=True)
+    aset = sync_to_async(set, thread_sensitive=True)
 
     def touch(self, key, timeout=DEFAULT_TIMEOUT, version=None):
         """
@@ -142,7 +142,7 @@ class BaseCache:
         """
         raise NotImplementedError('subclasses of BaseCache must provide a touch() method')
 
-    touch_async = sync_to_async(touch, thread_sensitive=True)
+    atouch = sync_to_async(touch, thread_sensitive=True)
 
     def delete(self, key, version=None):
         """
@@ -151,7 +151,7 @@ class BaseCache:
         """
         raise NotImplementedError('subclasses of BaseCache must provide a delete() method')
 
-    delete_async = sync_to_async(delete, thread_sensitive=True)
+    adelete = sync_to_async(delete, thread_sensitive=True)
 
     def get_many(self, keys, version=None):
         """
@@ -168,7 +168,7 @@ class BaseCache:
                 d[k] = val
         return d
 
-    async def get_many_async(self, keys, version=None):
+    async def aget_many(self, keys, version=None):
         """
         Fetch a bunch of keys from the cache. For certain backends (memcached,
         pgsql) this can be *much* faster when fetching multiple values.
@@ -178,7 +178,7 @@ class BaseCache:
         """
         d = {}
         for k in keys:
-            val = await self.get_async(k, version=version)
+            val = await self.aget(k, version=version)
             if val is not None:
                 d[k] = val
         return d
@@ -204,7 +204,7 @@ class BaseCache:
                 return self.get(key, default, version=version)
         return val
 
-    async def get_or_set_async(self, key, default, timeout=DEFAULT_TIMEOUT, version=None):
+    async def aget_or_set(self, key, default, timeout=DEFAULT_TIMEOUT, version=None):
         """
         Fetch a given key from the cache. If the key does not exist,
         add the key and set it to the default value. The default value can
@@ -213,16 +213,16 @@ class BaseCache:
 
         Return the value of the key stored or retrieved.
         """
-        val = await self.get_async(key, version=version)
+        val = await self.aget(key, version=version)
         if val is None:
             if callable(default):
                 default = default()
             if default is not None:
-                await self.add_async(key, default, timeout=timeout, version=version)
+                await self.aadd(key, default, timeout=timeout, version=version)
                 # Fetch the value again to avoid a race condition if another
                 # caller added a value between the first get() and the add()
                 # above.
-                return await self.get_async(key, default, version=version)
+                return await self.aget(key, default, version=version)
         return val
 
     def has_key(self, key, version=None):
@@ -231,11 +231,11 @@ class BaseCache:
         """
         return self.get(key, version=version) is not None
 
-    async def has_key_async(self, key, version=None):
+    async def ahas_key(self, key, version=None):
         """
         Return True if the key is in the cache and has not expired.
         """
-        return await self.get_async(key, version=version) is not None
+        return await self.aget(key, version=version) is not None
 
     def incr(self, key, delta=1, version=None):
         """
@@ -249,16 +249,16 @@ class BaseCache:
         self.set(key, new_value, version=version)
         return new_value
 
-    async def incr_async(self, key, delta=1, version=None):
+    async def aincr(self, key, delta=1, version=None):
         """
         Add delta to value in the cache. If the key does not exist, raise a
         ValueError exception.
         """
-        value = await self.get_async(key, version=version)
+        value = await self.aget(key, version=version)
         if value is None:
             raise ValueError("Key '%s' not found" % key)
         new_value = value + delta
-        await self.set_async(key, new_value, version=version)
+        await self.aset(key, new_value, version=version)
         return new_value
 
     def decr(self, key, delta=1, version=None):
@@ -268,12 +268,12 @@ class BaseCache:
         """
         return self.incr(key, -delta, version=version)
 
-    async def decr_async(self, key, delta=1, version=None):
+    async def adecr(self, key, delta=1, version=None):
         """
         Subtract delta from value in the cache. If the key does not exist, raise
         a ValueError exception.
         """
-        return await self.incr_async(key, -delta, version=version)
+        return await self.aincr(key, -delta, version=version)
 
     def __contains__(self, key):
         """
@@ -300,7 +300,7 @@ class BaseCache:
             self.set(key, value, timeout=timeout, version=version)
         return []
 
-    async def set_many_async(self, data, timeout=DEFAULT_TIMEOUT, version=None):
+    async def aset_many(self, data, timeout=DEFAULT_TIMEOUT, version=None):
         """
         Set a bunch of values in the cache at once from a dict of key/value
         pairs.  For certain backends (memcached), this is much more efficient
@@ -313,7 +313,7 @@ class BaseCache:
         insertion, or an empty list if all keys were inserted successfully.
         """
         for key, value in data.items():
-            await self.set_async(key, value, timeout=timeout, version=version)
+            await self.aset(key, value, timeout=timeout, version=version)
         return []
 
     def delete_many(self, keys, version=None):
@@ -325,20 +325,20 @@ class BaseCache:
         for key in keys:
             self.delete(key, version=version)
 
-    async def delete_many_async(self, keys, version=None):
+    async def adelete_many(self, keys, version=None):
         """
         Delete a bunch of values in the cache at once. For certain backends
         (memcached), this is much more efficient than calling delete() multiple
         times.
         """
         for key in keys:
-            await self.delete_async(key, version=version)
+            await self.adelete(key, version=version)
 
     def clear(self):
         """Remove *all* values from the cache at once."""
         raise NotImplementedError('subclasses of BaseCache must provide a clear() method')
 
-    clear_async = sync_to_async(clear, thread_sensitive=True)
+    aclear = sync_to_async(clear, thread_sensitive=True)
 
     def validate_key(self, key):
         """
@@ -365,7 +365,7 @@ class BaseCache:
         self.delete(key, version=version)
         return version + delta
 
-    async def incr_version_async(self, key, delta=1, version=None):
+    async def aincr_version(self, key, delta=1, version=None):
         """
         Add delta to the cache version for the supplied key. Return the new
         version.
@@ -373,12 +373,12 @@ class BaseCache:
         if version is None:
             version = self.version
 
-        value = await self.get_async(key, version=version)
+        value = await self.aget(key, version=version)
         if value is None:
             raise ValueError("Key '%s' not found" % key)
 
-        await self.set_async(key, value, version=version + delta)
-        await self.delete_async(key, version=version)
+        await self.aset(key, value, version=version + delta)
+        await self.adelete(key, version=version)
         return version + delta
 
     def decr_version(self, key, delta=1, version=None):
@@ -388,18 +388,18 @@ class BaseCache:
         """
         return self.incr_version(key, -delta, version)
 
-    async def decr_version_async(self, key, delta=1, version=None):
+    async def adecr_version(self, key, delta=1, version=None):
         """
         Subtract delta from the cache version for the supplied key. Return the
         new version.
         """
-        return await self.incr_version_async(key, -delta, version)
+        return await self.aincr_version(key, -delta, version)
 
     def close(self, **kwargs):
         """Close the cache connection"""
         pass
 
-    async def close_async(self, **kwargs):
+    async def aclose(self, **kwargs):
         """Close the cache connection"""
         pass
 
