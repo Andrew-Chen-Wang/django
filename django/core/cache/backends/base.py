@@ -33,7 +33,7 @@ def default_key_func(key, key_prefix, version):
     Default function to generate keys.
 
     Construct the key used by all other methods. By default, prepend
-    the `key_prefix'. KEY_FUNCTION can be used to specify an alternate
+    the `key_prefix`. KEY_FUNCTION can be used to specify an alternate
     function with custom key making behavior.
     """
     return '%s:%s:%s' % (key_prefix, version, key)
@@ -54,6 +54,8 @@ def get_key_func(key_func):
 
 
 class BaseCache:
+    _missing_key = object()
+
     def __init__(self, params):
         timeout = params.get('timeout', params.get('TIMEOUT', 300))
         if timeout is not None:
@@ -163,8 +165,8 @@ class BaseCache:
         """
         d = {}
         for k in keys:
-            val = self.get(k, version=version)
-            if val is not None:
+            val = self.get(k, self._missing_key, version=version)
+            if val is not self._missing_key:
                 d[k] = val
         return d
 
@@ -192,16 +194,14 @@ class BaseCache:
 
         Return the value of the key stored or retrieved.
         """
-        val = self.get(key, version=version)
-        if val is None:
+        val = self.get(key, self._missing_key, version=version)
+        if val is self._missing_key:
             if callable(default):
                 default = default()
-            if default is not None:
-                self.add(key, default, timeout=timeout, version=version)
-                # Fetch the value again to avoid a race condition if another
-                # caller added a value between the first get() and the add()
-                # above.
-                return self.get(key, default, version=version)
+            self.add(key, default, timeout=timeout, version=version)
+            # Fetch the value again to avoid a race condition if another caller
+            # added a value between the first get() and the add() above.
+            return self.get(key, default, version=version)
         return val
 
     async def aget_or_set(self, key, default, timeout=DEFAULT_TIMEOUT, version=None):
@@ -229,7 +229,7 @@ class BaseCache:
         """
         Return True if the key is in the cache and has not expired.
         """
-        return self.get(key, version=version) is not None
+        return self.get(key, self._missing_key, version=version) is not self._missing_key
 
     async def ahas_key(self, key, version=None):
         """
@@ -242,8 +242,8 @@ class BaseCache:
         Add delta to value in the cache. If the key does not exist, raise a
         ValueError exception.
         """
-        value = self.get(key, version=version)
-        if value is None:
+        value = self.get(key, self._missing_key, version=version)
+        if value is self._missing_key:
             raise ValueError("Key '%s' not found" % key)
         new_value = value + delta
         self.set(key, new_value, version=version)
@@ -357,8 +357,8 @@ class BaseCache:
         if version is None:
             version = self.version
 
-        value = self.get(key, version=version)
-        if value is None:
+        value = self.get(key, self._missing_key, version=version)
+        if value is self._missing_key:
             raise ValueError("Key '%s' not found" % key)
 
         self.set(key, value, version=version + delta)

@@ -375,7 +375,10 @@ class BaseExpression:
         yield self
         for expr in self.get_source_expressions():
             if expr:
-                yield from expr.flatten()
+                if hasattr(expr, 'flatten'):
+                    yield from expr.flatten()
+                else:
+                    yield expr
 
     def select_format(self, compiler, sql, params):
         """
@@ -897,6 +900,10 @@ class ExpressionList(Func):
     def __str__(self):
         return self.arg_joiner.join(str(arg) for arg in self.source_expressions)
 
+    def as_sqlite(self, compiler, connection, **extra_context):
+        # Casting to numeric is unnecessary.
+        return self.as_sql(compiler, connection, **extra_context)
+
 
 class ExpressionWrapper(Expression):
     """
@@ -915,9 +922,13 @@ class ExpressionWrapper(Expression):
         return [self.expression]
 
     def get_group_by_cols(self, alias=None):
-        expression = self.expression.copy()
-        expression.output_field = self.output_field
-        return expression.get_group_by_cols(alias=alias)
+        if isinstance(self.expression, Expression):
+            expression = self.expression.copy()
+            expression.output_field = self.output_field
+            return expression.get_group_by_cols(alias=alias)
+        # For non-expressions e.g. an SQL WHERE clause, the entire
+        # `expression` must be included in the GROUP BY clause.
+        return super().get_group_by_cols()
 
     def as_sql(self, compiler, connection):
         return compiler.compile(self.expression)
@@ -1116,10 +1127,14 @@ class Subquery(Expression):
     def external_aliases(self):
         return self.query.external_aliases
 
-    def as_sql(self, compiler, connection, template=None, **extra_context):
+    def get_external_cols(self):
+        return self.query.get_external_cols()
+
+    def as_sql(self, compiler, connection, template=None, query=None, **extra_context):
         connection.ops.check_expression_support(self)
         template_params = {**self.extra, **extra_context}
-        subquery_sql, sql_params = self.query.as_sql(compiler, connection)
+        query = query or self.query
+        subquery_sql, sql_params = query.as_sql(compiler, connection)
         template_params['subquery'] = subquery_sql[1:-1]
 
         template = template or template_params.get('template', self.template)
@@ -1129,7 +1144,7 @@ class Subquery(Expression):
     def get_group_by_cols(self, alias=None):
         if alias:
             return [Ref(alias, self)]
-        external_cols = self.query.get_external_cols()
+        external_cols = self.get_external_cols()
         if any(col.possibly_multivalued for col in external_cols):
             return [self]
         return external_cols
@@ -1142,7 +1157,6 @@ class Exists(Subquery):
     def __init__(self, queryset, negated=False, **kwargs):
         self.negated = negated
         super().__init__(queryset, **kwargs)
-        self.query = self.query.exists()
 
     def __invert__(self):
         clone = self.copy()
@@ -1150,7 +1164,14 @@ class Exists(Subquery):
         return clone
 
     def as_sql(self, compiler, connection, template=None, **extra_context):
-        sql, params = super().as_sql(compiler, connection, template, **extra_context)
+        query = self.query.exists(using=connection.alias)
+        sql, params = super().as_sql(
+            compiler,
+            connection,
+            template=template,
+            query=query,
+            **extra_context,
+        )
         if self.negated:
             sql = 'NOT {}'.format(sql)
         return sql, params

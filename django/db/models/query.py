@@ -654,9 +654,6 @@ class QuerySet:
                 "earliest() and latest() require either fields as positional "
                 "arguments or 'get_latest_by' in the model's Meta."
             )
-
-        assert not self.query.is_sliced, \
-            "Cannot change a query once a slice has been taken."
         obj = self._chain()
         obj.query.set_limits(high=1)
         obj.query.clear_ordering(force_empty=True)
@@ -664,9 +661,13 @@ class QuerySet:
         return obj.get()
 
     def earliest(self, *fields):
+        if self.query.is_sliced:
+            raise TypeError('Cannot change a query once a slice has been taken.')
         return self._earliest(*fields)
 
     def latest(self, *fields):
+        if self.query.is_sliced:
+            raise TypeError('Cannot change a query once a slice has been taken.')
         return self.reverse()._earliest(*fields)
 
     def first(self):
@@ -684,8 +685,8 @@ class QuerySet:
         Return a dictionary mapping each of the given IDs to the object with
         that ID. If `id_list` isn't provided, evaluate the entire QuerySet.
         """
-        assert not self.query.is_sliced, \
-            "Cannot use 'limit' or 'offset' with in_bulk"
+        if self.query.is_sliced:
+            raise TypeError("Cannot use 'limit' or 'offset' with in_bulk().")
         opts = self.model._meta
         unique_fields = [
             constraint.fields[0]
@@ -721,9 +722,10 @@ class QuerySet:
     def delete(self):
         """Delete the records in the current QuerySet."""
         self._not_support_combined_queries('delete')
-        assert not self.query.is_sliced, \
-            "Cannot use 'limit' or 'offset' with delete."
-
+        if self.query.is_sliced:
+            raise TypeError("Cannot use 'limit' or 'offset' with delete().")
+        if self.query.distinct or self.query.distinct_fields:
+            raise TypeError('Cannot call delete() after .distinct().')
         if self._fields is not None:
             raise TypeError("Cannot call delete() after .values() or .values_list()")
 
@@ -770,8 +772,8 @@ class QuerySet:
         fields to the appropriate values.
         """
         self._not_support_combined_queries('update')
-        assert not self.query.is_sliced, \
-            "Cannot update a query once a slice has been taken."
+        if self.query.is_sliced:
+            raise TypeError('Cannot update a query once a slice has been taken.')
         self._for_write = True
         query = self.query.chain(sql.UpdateQuery)
         query.add_update_values(kwargs)
@@ -790,8 +792,8 @@ class QuerySet:
         code (it requires too much poking around at model internals to be
         useful at that level).
         """
-        assert not self.query.is_sliced, \
-            "Cannot update a query once a slice has been taken."
+        if self.query.is_sliced:
+            raise TypeError('Cannot update a query once a slice has been taken.')
         query = self.query.chain(sql.UpdateQuery)
         query.add_update_fields(values)
         # Clear any annotations so that they won't be present in subqueries.
@@ -806,6 +808,27 @@ class QuerySet:
             return self.query.has_results(using=self.db)
         return bool(self._result_cache)
 
+    def contains(self, obj):
+        """Return True if the queryset contains an object."""
+        self._not_support_combined_queries('contains')
+        if self._fields is not None:
+            raise TypeError(
+                'Cannot call QuerySet.contains() after .values() or '
+                '.values_list().'
+            )
+        try:
+            if obj._meta.concrete_model != self.model._meta.concrete_model:
+                return False
+        except AttributeError:
+            raise TypeError("'obj' must be a model instance.")
+        if obj.pk is None:
+            raise ValueError(
+                'QuerySet.contains() cannot be used on unsaved objects.'
+            )
+        if self._result_cache is not None:
+            return obj in self._result_cache
+        return self.filter(pk=obj.pk).exists()
+
     def _prefetch_related_objects(self):
         # This method can only be called once the result cache has been filled.
         prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
@@ -818,7 +841,7 @@ class QuerySet:
     # PUBLIC METHODS THAT RETURN A QUERYSET SUBCLASS #
     ##################################################
 
-    def raw(self, raw_query, params=None, translations=None, using=None):
+    def raw(self, raw_query, params=(), translations=None, using=None):
         if using is None:
             using = self.db
         qs = RawQuerySet(raw_query, model=self.model, params=params, translations=translations, using=using)
@@ -947,10 +970,8 @@ class QuerySet:
         return self._filter_or_exclude(True, args, kwargs)
 
     def _filter_or_exclude(self, negate, args, kwargs):
-        if args or kwargs:
-            assert not self.query.is_sliced, \
-                "Cannot filter a query once a slice has been taken."
-
+        if (args or kwargs) and self.query.is_sliced:
+            raise TypeError('Cannot filter a query once a slice has been taken.')
         clone = self._chain()
         if self._defer_next_filter:
             self._defer_next_filter = False
@@ -1140,8 +1161,8 @@ class QuerySet:
 
     def order_by(self, *field_names):
         """Return a new QuerySet instance with the ordering changed."""
-        assert not self.query.is_sliced, \
-            "Cannot reorder a query once a slice has been taken."
+        if self.query.is_sliced:
+            raise TypeError('Cannot reorder a query once a slice has been taken.')
         obj = self._chain()
         obj.query.clear_ordering(force_empty=False)
         obj.query.add_ordering(*field_names)
@@ -1152,8 +1173,8 @@ class QuerySet:
         Return a new QuerySet instance that will select only distinct results.
         """
         self._not_support_combined_queries('distinct')
-        assert not self.query.is_sliced, \
-            "Cannot create distinct fields once a slice has been taken."
+        if self.query.is_sliced:
+            raise TypeError('Cannot create distinct fields once a slice has been taken.')
         obj = self._chain()
         obj.query.add_distinct_fields(*field_names)
         return obj
@@ -1162,8 +1183,8 @@ class QuerySet:
               order_by=None, select_params=None):
         """Add extra SQL fragments to the query."""
         self._not_support_combined_queries('extra')
-        assert not self.query.is_sliced, \
-            "Cannot change a query once a slice has been taken"
+        if self.query.is_sliced:
+            raise TypeError('Cannot change a query once a slice has been taken.')
         clone = self._chain()
         clone.query.add_extra(select, select_params, where, params, tables, order_by)
         return clone
@@ -1419,14 +1440,14 @@ class RawQuerySet:
     Provide an iterator which converts the results of raw SQL queries into
     annotated model instances.
     """
-    def __init__(self, raw_query, model=None, query=None, params=None,
+    def __init__(self, raw_query, model=None, query=None, params=(),
                  translations=None, using=None, hints=None):
         self.raw_query = raw_query
         self.model = model
         self._db = using
         self._hints = hints or {}
         self.query = query or sql.RawQuery(sql=raw_query, using=self.db, params=params)
-        self.params = params or ()
+        self.params = params
         self.translations = translations or {}
         self._result_cache = None
         self._prefetch_related_lookups = ()
@@ -1720,8 +1741,17 @@ def prefetch_related_objects(model_instances, *related_lookups):
                                  "prefetching - this is an invalid parameter to "
                                  "prefetch_related()." % lookup.prefetch_through)
 
-            if prefetcher is not None and not is_fetched:
-                obj_list, additional_lookups = prefetch_one_level(obj_list, prefetcher, lookup, level)
+            obj_to_fetch = None
+            if prefetcher is not None:
+                obj_to_fetch = [obj for obj in obj_list if not is_fetched(obj)]
+
+            if obj_to_fetch:
+                obj_list, additional_lookups = prefetch_one_level(
+                    obj_to_fetch,
+                    prefetcher,
+                    lookup,
+                    level,
+                )
                 # We need to ensure we don't keep adding lookups from the
                 # same relationships to stop infinite recursion. So, if we
                 # are already on an automatically added lookup, don't add
@@ -1771,10 +1801,14 @@ def get_prefetcher(instance, through_attr, to_attr):
     (the object with get_prefetch_queryset (or None),
      the descriptor object representing this relationship (or None),
      a boolean that is False if the attribute was not found at all,
-     a boolean that is True if the attribute has already been fetched)
+     a function that takes an instance and returns a boolean that is True if
+     the attribute has already been fetched for that instance)
     """
+    def has_to_attr_attribute(instance):
+        return hasattr(instance, to_attr)
+
     prefetcher = None
-    is_fetched = False
+    is_fetched = has_to_attr_attribute
 
     # For singly related objects, we have to avoid getting the attribute
     # from the object, as this will trigger the query. So we first try
@@ -1789,8 +1823,7 @@ def get_prefetcher(instance, through_attr, to_attr):
             # get_prefetch_queryset() method.
             if hasattr(rel_obj_descriptor, 'get_prefetch_queryset'):
                 prefetcher = rel_obj_descriptor
-                if rel_obj_descriptor.is_cached(instance):
-                    is_fetched = True
+                is_fetched = rel_obj_descriptor.is_cached
             else:
                 # descriptor doesn't support prefetching, so we go ahead and get
                 # the attribute on the instance rather than the class to
@@ -1802,11 +1835,15 @@ def get_prefetcher(instance, through_attr, to_attr):
                     # Special case cached_property instances because hasattr
                     # triggers attribute computation and assignment.
                     if isinstance(getattr(instance.__class__, to_attr, None), cached_property):
-                        is_fetched = to_attr in instance.__dict__
-                    else:
-                        is_fetched = hasattr(instance, to_attr)
+                        def has_cached_property(instance):
+                            return to_attr in instance.__dict__
+
+                        is_fetched = has_cached_property
                 else:
-                    is_fetched = through_attr in instance._prefetched_objects_cache
+                    def in_prefetched_cache(instance):
+                        return through_attr in instance._prefetched_objects_cache
+
+                    is_fetched = in_prefetched_cache
     return prefetcher, rel_obj_descriptor, attr_found, is_fetched
 
 

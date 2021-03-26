@@ -9,9 +9,7 @@ all about the internals of models in order to get the information it needs.
 import copy
 import difflib
 import functools
-import inspect
 import sys
-import warnings
 from collections import Counter, namedtuple
 from collections.abc import Iterator, Mapping
 from itertools import chain, count, product
@@ -37,7 +35,6 @@ from django.db.models.sql.datastructures import (
 from django.db.models.sql.where import (
     AND, OR, ExtraWhere, NothingNode, WhereNode,
 )
-from django.utils.deprecation import RemovedInDjango40Warning
 from django.utils.functional import cached_property
 from django.utils.hashable import make_hashable
 from django.utils.tree import Node
@@ -69,8 +66,8 @@ JoinInfo = namedtuple(
 class RawQuery:
     """A single raw SQL query."""
 
-    def __init__(self, sql, using, params=None):
-        self.params = params or ()
+    def __init__(self, sql, using, params=()):
+        self.params = params
         self.sql = sql
         self.using = using
         self.cursor = None
@@ -111,9 +108,13 @@ class RawQuery:
 
     @property
     def params_type(self):
+        if self.params is None:
+            return None
         return dict if isinstance(self.params, Mapping) else tuple
 
     def __str__(self):
+        if self.params_type is None:
+            return self.sql
         return self.sql % self.params_type(self.params)
 
     def _execute_query(self):
@@ -127,6 +128,8 @@ class RawQuery:
             params = tuple(adapter(val) for val in self.params)
         elif params_type is dict:
             params = {key: adapter(val) for key, val in self.params.items()}
+        elif params_type is None:
+            params = None
         else:
             raise RuntimeError("Unexpected params type: %s" % params_type)
 
@@ -525,7 +528,7 @@ class Query(BaseExpression):
     def has_filters(self):
         return self.where
 
-    def exists(self):
+    def exists(self, using, limit=True):
         q = self.clone()
         if not q.distinct:
             if q.group_by is True:
@@ -534,14 +537,21 @@ class Query(BaseExpression):
                 # SELECT clause which is about to be cleared.
                 q.set_group_by(allow_aliases=False)
             q.clear_select_clause()
+        if q.combined_queries and q.combinator == 'union':
+            limit_combined = connections[using].features.supports_slicing_ordering_in_compound
+            q.combined_queries = tuple(
+                combined_query.exists(using, limit=limit_combined)
+                for combined_query in q.combined_queries
+            )
         q.clear_ordering(True)
-        q.set_limits(high=1)
+        if limit:
+            q.set_limits(high=1)
         q.add_extra({'a': 1}, None, None, None, None, None)
         q.set_extra_mask(['a'])
         return q
 
     def has_results(self, using):
-        q = self.exists()
+        q = self.exists(using)
         compiler = q.get_compiler(using=using)
         return compiler.has_results()
 
@@ -564,8 +574,8 @@ class Query(BaseExpression):
         """
         assert self.model == rhs.model, \
             "Cannot combine queries on two different base models."
-        assert not self.is_sliced, \
-            "Cannot combine queries once a slice has been taken."
+        if self.is_sliced:
+            raise TypeError('Cannot combine queries once a slice has been taken.')
         assert self.distinct == rhs.distinct, \
             "Cannot combine a unique query with a non-unique query."
         assert self.distinct_fields == rhs.distinct_fields, \
@@ -1062,7 +1072,7 @@ class Query(BaseExpression):
     def get_external_cols(self):
         exprs = chain(self.annotations.values(), self.where.children)
         return [
-            col for col in self._gen_cols(exprs)
+            col for col in self._gen_cols(exprs, include_external=True)
             if col.alias in self.external_aliases
         ]
 
@@ -1603,6 +1613,8 @@ class Query(BaseExpression):
         # fields to the appropriate wrapped version.
 
         def final_transformer(field, alias):
+            if not self.alias_cols:
+                alias = None
             return field.get_col(alias)
 
         # Try resolving all the names as fields first. If there's an error,
@@ -1695,20 +1707,23 @@ class Query(BaseExpression):
         return targets, joins[-1], joins
 
     @classmethod
-    def _gen_cols(cls, exprs):
+    def _gen_cols(cls, exprs, include_external=False):
         for expr in exprs:
             if isinstance(expr, Col):
                 yield expr
+            elif include_external and callable(getattr(expr, 'get_external_cols', None)):
+                yield from expr.get_external_cols()
             else:
-                yield from cls._gen_cols(expr.get_source_expressions())
+                yield from cls._gen_cols(
+                    expr.get_source_expressions(),
+                    include_external=include_external,
+                )
 
     @classmethod
     def _gen_col_aliases(cls, exprs):
         yield from (expr.alias for expr in cls._gen_cols(exprs))
 
     def resolve_ref(self, name, allow_joins=True, reuse=None, summarize=False):
-        if not allow_joins and LOOKUP_SEP in name:
-            raise FieldError("Joined field references are not permitted in this query")
         annotation = self.annotations.get(name)
         if annotation is not None:
             if not allow_joins:
@@ -1733,6 +1748,11 @@ class Query(BaseExpression):
                 return annotation
         else:
             field_list = name.split(LOOKUP_SEP)
+            annotation = self.annotations.get(field_list[0])
+            if annotation is not None:
+                for transform in field_list[1:]:
+                    annotation = self.try_transform(annotation, transform)
+                return annotation
             join_info = self.setup_joins(field_list, self.get_meta(), self.get_initial_alias(), can_reuse=reuse)
             targets, final_alias, join_list = self.trim_joins(join_info.targets, join_info.joins, join_info.path)
             if not allow_joins and len(join_list) > 1:
@@ -1742,10 +1762,10 @@ class Query(BaseExpression):
                                  "isn't supported")
             # Verify that the last lookup in name is a field or a transform:
             # transform_function() raises FieldError if not.
-            join_info.transform_function(targets[0], final_alias)
+            transform = join_info.transform_function(targets[0], final_alias)
             if reuse is not None:
                 reuse.update(join_list)
-            return self._get_col(targets[0], join_info.targets[0], join_list[-1])
+            return transform
 
     def split_exclude(self, filter_expr, can_reuse, names_with_path):
         """
@@ -1951,15 +1971,6 @@ class Query(BaseExpression):
         errors = []
         for item in ordering:
             if isinstance(item, str):
-                if '.' in item:
-                    warnings.warn(
-                        'Passing column raw column aliases to order_by() is '
-                        'deprecated. Wrap %r in a RawSQL expression before '
-                        'passing it to order_by().' % item,
-                        category=RemovedInDjango40Warning,
-                        stacklevel=3,
-                    )
-                    continue
                 if item == '?':
                     continue
                 if item.startswith('-'):
@@ -2020,19 +2031,9 @@ class Query(BaseExpression):
         group_by = list(self.select)
         if self.annotation_select:
             for alias, annotation in self.annotation_select.items():
-                signature = inspect.signature(annotation.get_group_by_cols)
-                if 'alias' not in signature.parameters:
-                    annotation_class = annotation.__class__
-                    msg = (
-                        '`alias=None` must be added to the signature of '
-                        '%s.%s.get_group_by_cols().'
-                    ) % (annotation_class.__module__, annotation_class.__qualname__)
-                    warnings.warn(msg, category=RemovedInDjango40Warning)
-                    group_by_cols = annotation.get_group_by_cols()
-                else:
-                    if not allow_aliases or alias in column_names:
-                        alias = None
-                    group_by_cols = annotation.get_group_by_cols(alias=alias)
+                if not allow_aliases or alias in column_names:
+                    alias = None
+                group_by_cols = annotation.get_group_by_cols(alias=alias)
                 group_by.extend(group_by_cols)
         self.group_by = tuple(group_by)
 

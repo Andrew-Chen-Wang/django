@@ -101,10 +101,10 @@ Model field                         Form field
 
 :class:`GenericIPAddressField`      :class:`~django.forms.GenericIPAddressField`
 
+:class:`JSONField`                  :class:`~django.forms.JSONField`
+
 :class:`ManyToManyField`            :class:`~django.forms.ModelMultipleChoiceField`
                                     (see below)
-
-:class:`NullBooleanField`           :class:`~django.forms.NullBooleanField`
 
 :class:`PositiveBigIntegerField`    :class:`~django.forms.IntegerField`
 

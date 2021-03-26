@@ -112,12 +112,12 @@ Use the ``django.test.Client`` class to make requests.
 .. class:: Client(enforce_csrf_checks=False, json_encoder=DjangoJSONEncoder, **defaults)
 
     It requires no arguments at time of construction. However, you can use
-    keywords arguments to specify some default headers. For example, this will
+    keyword arguments to specify some default headers. For example, this will
     send a ``User-Agent`` HTTP header in each request::
 
         >>> c = Client(HTTP_USER_AGENT='Mozilla/5.0')
 
-    The values from the ``extra`` keywords arguments passed to
+    The values from the ``extra`` keyword arguments passed to
     :meth:`~django.test.Client.get()`,
     :meth:`~django.test.Client.post()`, etc. have precedence over
     the defaults passed to the class constructor.
@@ -768,11 +768,6 @@ If your tests make any database queries, use subclasses
     on macOS). If you want to intentionally raise an exception such as
     :exc:`unittest.SkipTest` in ``setUpClass()``, be sure to do it before
     calling ``super()`` to avoid this.
-
-.. versionchanged:: 3.1
-
-    The ``debug()`` method was implemented to allow running a test without
-    collecting the result and catching exceptions.
 
 ``TransactionTestCase``
 -----------------------
@@ -1601,8 +1596,8 @@ your test suite.
       closed or the HTML document ends.
     * Empty tags are equivalent to their self-closing version.
     * The ordering of attributes of an HTML element is not significant.
-    * Attributes without an argument are equal to attributes that equal in
-      name and value (see the examples).
+    * Boolean attributes (like ``checked``) without an argument are equal to
+      attributes that equal in name and value (see the examples).
     * Text, character references, and entity references that refer to the same
       character are equivalent.
 
@@ -1620,10 +1615,16 @@ your test suite.
             '<input id="id_accept_terms" type="checkbox" checked>'
         )
 
-    ``html1`` and ``html2`` must be valid HTML. An ``AssertionError`` will be
+    ``html1`` and ``html2`` must contain HTML. An ``AssertionError`` will be
     raised if one of them cannot be parsed.
 
     Output in case of error can be customized with the ``msg`` argument.
+
+    .. versionchanged:: 4.0
+
+        In older versions, any attribute (not only boolean attributes) without
+        a value was considered equal to an attribute with the same name and
+        value.
 
 .. method:: SimpleTestCase.assertHTMLNotEqual(html1, html2, msg=None)
 
@@ -1631,7 +1632,7 @@ your test suite.
     comparison is based on HTML semantics. See
     :meth:`~SimpleTestCase.assertHTMLEqual` for details.
 
-    ``html1`` and ``html2`` must be valid HTML. An ``AssertionError`` will be
+    ``html1`` and ``html2`` must contain HTML. An ``AssertionError`` will be
     raised if one of them cannot be parsed.
 
     Output in case of error can be customized with the ``msg`` argument.
@@ -1666,7 +1667,7 @@ your test suite.
     of ``needle`` occurrences will be strictly verified.
 
     Whitespace in most cases is ignored, and attribute ordering is not
-    significant. The passed-in arguments must be valid HTML.
+    significant. See :meth:`~SimpleTestCase.assertHTMLEqual` for more details.
 
 .. method:: SimpleTestCase.assertJSONEqual(raw, expected_data, msg=None)
 
@@ -1695,7 +1696,7 @@ your test suite.
     provide an implicit ordering, you can set the ``ordered`` parameter to
     ``False``, which turns the comparison into a ``collections.Counter`` comparison.
     If the order is undefined (if the given ``qs`` isn't ordered and the
-    comparison is against more than one ordered values), a ``ValueError`` is
+    comparison is against more than one ordered value), a ``ValueError`` is
     raised.
 
     Output in case of error can be customized with the ``msg`` argument.
@@ -1805,8 +1806,6 @@ won't be run.
 
 Testing asynchronous code
 =========================
-
-.. versionadded:: 3.1
 
 If you merely want to test the output of your asynchronous views, the standard
 test client will run them inside their own asynchronous loop without any extra

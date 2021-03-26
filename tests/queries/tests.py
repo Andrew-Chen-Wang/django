@@ -12,8 +12,7 @@ from django.db.models.expressions import RawSQL
 from django.db.models.sql.constants import LOUTER
 from django.db.models.sql.where import NothingNode, WhereNode
 from django.test import SimpleTestCase, TestCase, skipUnlessDBFeature
-from django.test.utils import CaptureQueriesContext, ignore_warnings
-from django.utils.deprecation import RemovedInDjango40Warning
+from django.test.utils import CaptureQueriesContext
 
 from .models import (
     FK1, Annotation, Article, Author, BaseA, Book, CategoryItem,
@@ -594,13 +593,6 @@ class Queries1Tests(TestCase):
             [datetime.datetime(2007, 12, 19, 0, 0)],
         )
 
-    @ignore_warnings(category=RemovedInDjango40Warning)
-    def test_ticket7098(self):
-        self.assertSequenceEqual(
-            Item.objects.values('note__note').order_by('queries_note.note', 'id'),
-            [{'note__note': 'n2'}, {'note__note': 'n3'}, {'note__note': 'n3'}, {'note__note': 'n3'}]
-        )
-
     def test_order_by_rawsql(self):
         self.assertSequenceEqual(
             Item.objects.values('note__note').order_by(
@@ -614,15 +606,6 @@ class Queries1Tests(TestCase):
                 {'note__note': 'n3'},
             ],
         )
-
-    def test_order_by_raw_column_alias_warning(self):
-        msg = (
-            "Passing column raw column aliases to order_by() is deprecated. "
-            "Wrap 'queries_author.name' in a RawSQL expression before "
-            "passing it to order_by()."
-        )
-        with self.assertRaisesMessage(RemovedInDjango40Warning, msg):
-            Item.objects.values('creator__name').order_by('queries_author.name')
 
     def test_ticket7096(self):
         # Make sure exclude() with multiple conditions continues to work.
@@ -717,7 +700,8 @@ class Queries1Tests(TestCase):
             )
             self.assertQuerysetEqual(q.reverse(), [])
             q.query.low_mark = 1
-            with self.assertRaisesMessage(AssertionError, 'Cannot change a query once a slice has been taken'):
+            msg = 'Cannot change a query once a slice has been taken.'
+            with self.assertRaisesMessage(TypeError, msg):
                 q.extra(select={'foo': "1"})
             self.assertQuerysetEqual(q.defer('meal'), [])
             self.assertQuerysetEqual(q.only('meal'), [])
@@ -2376,15 +2360,18 @@ class QuerySetSupportsPythonIdioms(TestCase):
         )
 
     def test_slicing_cannot_filter_queryset_once_sliced(self):
-        with self.assertRaisesMessage(AssertionError, "Cannot filter a query once a slice has been taken."):
+        msg = 'Cannot filter a query once a slice has been taken.'
+        with self.assertRaisesMessage(TypeError, msg):
             Article.objects.all()[0:5].filter(id=1)
 
     def test_slicing_cannot_reorder_queryset_once_sliced(self):
-        with self.assertRaisesMessage(AssertionError, "Cannot reorder a query once a slice has been taken."):
+        msg = 'Cannot reorder a query once a slice has been taken.'
+        with self.assertRaisesMessage(TypeError, msg):
             Article.objects.all()[0:5].order_by('id')
 
     def test_slicing_cannot_combine_queries_once_sliced(self):
-        with self.assertRaisesMessage(AssertionError, "Cannot combine queries once a slice has been taken."):
+        msg = 'Cannot combine queries once a slice has been taken.'
+        with self.assertRaisesMessage(TypeError, msg):
             Article.objects.all()[0:1] & Article.objects.all()[4:5]
 
     def test_slicing_negative_indexing_not_supported_for_single_element(self):
@@ -2434,7 +2421,8 @@ class WeirdQuerysetSlicingTests(TestCase):
         self.assertQuerysetEqual(Article.objects.all()[0:0], [])
         self.assertQuerysetEqual(Article.objects.all()[0:0][:10], [])
         self.assertEqual(Article.objects.all()[:0].count(), 0)
-        with self.assertRaisesMessage(TypeError, 'Cannot reverse a query once a slice has been taken.'):
+        msg = 'Cannot change a query once a slice has been taken.'
+        with self.assertRaisesMessage(TypeError, msg):
             Article.objects.all()[:0].latest('created')
 
     def test_empty_resultset_sql(self):
@@ -3082,6 +3070,15 @@ class QuerySetExceptionTests(SimpleTestCase):
         )
         with self.assertRaisesMessage(FieldError, msg):
             Article.objects.order_by('*')
+
+    def test_invalid_order_by_raw_column_alias(self):
+        msg = (
+            "Cannot resolve keyword 'queries_author.name' into field. Choices "
+            "are: cover, created, creator, creator_id, id, modified, name, "
+            "note, note_id, tags"
+        )
+        with self.assertRaisesMessage(FieldError, msg):
+            Item.objects.values('creator__name').order_by('queries_author.name')
 
     def test_invalid_queryset_model(self):
         msg = 'Cannot use QuerySet for "Article": Use a QuerySet for "ExtraInfo".'
