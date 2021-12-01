@@ -43,13 +43,27 @@ class BaseDatabaseIntrospection:
         the database's ORDER BY here to avoid subtle differences in sorting
         order between databases.
         """
+
         def get_names(cursor):
             return sorted(ti.name for ti in self.get_table_list(cursor)
                           if include_views or ti.type == 't')
+
         if cursor is None:
             with self.connection.cursor() as cursor:
                 return get_names(cursor)
         return get_names(cursor)
+
+    async def atable_names(self, cursor=None, include_views=False):
+        """See table_names()."""
+
+        async def get_names(cursor):
+            return sorted(ti.name for ti in await self.aget_table_list(cursor)
+                          if include_views or ti.type == 't')
+
+        if cursor is None:
+            async with self.connection.acursor() as cursor:
+                return await get_names(cursor)
+        return await get_names(cursor)
 
     def get_table_list(self, cursor):
         """
@@ -57,6 +71,10 @@ class BaseDatabaseIntrospection:
         views that exist in the database.
         """
         raise NotImplementedError('subclasses of BaseDatabaseIntrospection may require a get_table_list() method')
+
+    async def aget_table_list(self, cursor):
+        """See aget_table_list()."""
+        raise NotImplementedError('subclasses of BaseDatabaseIntrospection may require an aget_table_list() method')
 
     def get_table_description(self, cursor, table_name):
         """

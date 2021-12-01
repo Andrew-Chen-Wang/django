@@ -80,7 +80,7 @@ Database.register_converter("timestamp", decoder(parse_datetime))
 Database.register_adapter(decimal.Decimal, str)
 
 
-class DatabaseWrapper(BaseDatabaseWrapper):
+class BaseSQLiteDatabaseWrapper(BaseDatabaseWrapper):
     vendor = 'sqlite'
     display_name = 'SQLite'
     # SQLite doesn't actually support most of these types, but it "does the right
@@ -164,15 +164,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'iendswith': r"LIKE '%%' || UPPER({}) ESCAPE '\'",
     }
 
-    Database = Database
-    SchemaEditorClass = DatabaseSchemaEditor
-    # Classes instantiated in __init__().
-    client_class = DatabaseClient
-    creation_class = DatabaseCreation
-    features_class = DatabaseFeatures
-    introspection_class = DatabaseIntrospection
-    ops_class = DatabaseOperations
-
     def get_connection_params(self):
         settings_dict = self.settings_dict
         if not settings_dict['NAME']:
@@ -201,6 +192,68 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         kwargs.update({'check_same_thread': False, 'uri': True})
         return kwargs
 
+    @staticmethod
+    def create_conn_functions(create_deterministic_function):
+        return (
+            create_deterministic_function('django_date_extract', 2, _sqlite_datetime_extract),
+            create_deterministic_function('django_date_trunc', 4, _sqlite_date_trunc),
+            create_deterministic_function('django_datetime_cast_date', 3, _sqlite_datetime_cast_date),
+            create_deterministic_function('django_datetime_cast_time', 3, _sqlite_datetime_cast_time),
+            create_deterministic_function('django_datetime_extract', 4, _sqlite_datetime_extract),
+            create_deterministic_function('django_datetime_trunc', 4, _sqlite_datetime_trunc),
+            create_deterministic_function('django_time_extract', 2, _sqlite_time_extract),
+            create_deterministic_function('django_time_trunc', 4, _sqlite_time_trunc),
+            create_deterministic_function('django_time_diff', 2, _sqlite_time_diff),
+            create_deterministic_function('django_timestamp_diff', 2, _sqlite_timestamp_diff),
+            create_deterministic_function('django_format_dtdelta', 3, _sqlite_format_dtdelta),
+            create_deterministic_function('regexp', 2, _sqlite_regexp),
+            create_deterministic_function('ACOS', 1, none_guard(math.acos)),
+            create_deterministic_function('ASIN', 1, none_guard(math.asin)),
+            create_deterministic_function('ATAN', 1, none_guard(math.atan)),
+            create_deterministic_function('ATAN2', 2, none_guard(math.atan2)),
+            create_deterministic_function('BITXOR', 2, none_guard(operator.xor)),
+            create_deterministic_function('CEILING', 1, none_guard(math.ceil)),
+            create_deterministic_function('COS', 1, none_guard(math.cos)),
+            create_deterministic_function('COT', 1, none_guard(lambda x: 1 / math.tan(x))),
+            create_deterministic_function('DEGREES', 1, none_guard(math.degrees)),
+            create_deterministic_function('EXP', 1, none_guard(math.exp)),
+            create_deterministic_function('FLOOR', 1, none_guard(math.floor)),
+            create_deterministic_function('LN', 1, none_guard(math.log)),
+            create_deterministic_function('LOG', 2, none_guard(lambda x, y: math.log(y, x))),
+            create_deterministic_function('LPAD', 3, _sqlite_lpad),
+            create_deterministic_function('MD5', 1, none_guard(lambda x: md5(x.encode()).hexdigest())),
+            create_deterministic_function('MOD', 2, none_guard(math.fmod)),
+            create_deterministic_function('PI', 0, lambda: math.pi),
+            create_deterministic_function('POWER', 2, none_guard(operator.pow)),
+            create_deterministic_function('RADIANS', 1, none_guard(math.radians)),
+            create_deterministic_function('REPEAT', 2, none_guard(operator.mul)),
+            create_deterministic_function('REVERSE', 1, none_guard(lambda x: x[::-1])),
+            create_deterministic_function('RPAD', 3, _sqlite_rpad),
+            create_deterministic_function('SHA1', 1, none_guard(lambda x: hashlib.sha1(x.encode()).hexdigest())),
+            create_deterministic_function('SHA224', 1, none_guard(lambda x: hashlib.sha224(x.encode()).hexdigest())),
+            create_deterministic_function('SHA256', 1, none_guard(lambda x: hashlib.sha256(x.encode()).hexdigest())),
+            create_deterministic_function('SHA384', 1, none_guard(lambda x: hashlib.sha384(x.encode()).hexdigest())),
+            create_deterministic_function('SHA512', 1, none_guard(lambda x: hashlib.sha512(x.encode()).hexdigest())),
+            create_deterministic_function('SIGN', 1, none_guard(lambda x: (x > 0) - (x < 0))),
+            create_deterministic_function('SIN', 1, none_guard(math.sin)),
+            create_deterministic_function('SQRT', 1, none_guard(math.sqrt)),
+            create_deterministic_function('TAN', 1, none_guard(math.tan)),
+        )
+
+    def init_connection_state(self):
+        pass
+
+
+class DatabaseWrapper(BaseSQLiteDatabaseWrapper):
+    Database = Database
+    SchemaEditorClass = DatabaseSchemaEditor
+    # Classes instantiated in __init__().
+    client_class = DatabaseClient
+    creation_class = DatabaseCreation
+    features_class = DatabaseFeatures
+    introspection_class = DatabaseIntrospection
+    ops_class = DatabaseOperations
+
     @async_unsafe
     def get_new_connection(self, conn_params):
         conn = Database.connect(**conn_params)
@@ -208,49 +261,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             conn.create_function,
             deterministic=True,
         )
-        create_deterministic_function('django_date_extract', 2, _sqlite_datetime_extract)
-        create_deterministic_function('django_date_trunc', 4, _sqlite_date_trunc)
-        create_deterministic_function('django_datetime_cast_date', 3, _sqlite_datetime_cast_date)
-        create_deterministic_function('django_datetime_cast_time', 3, _sqlite_datetime_cast_time)
-        create_deterministic_function('django_datetime_extract', 4, _sqlite_datetime_extract)
-        create_deterministic_function('django_datetime_trunc', 4, _sqlite_datetime_trunc)
-        create_deterministic_function('django_time_extract', 2, _sqlite_time_extract)
-        create_deterministic_function('django_time_trunc', 4, _sqlite_time_trunc)
-        create_deterministic_function('django_time_diff', 2, _sqlite_time_diff)
-        create_deterministic_function('django_timestamp_diff', 2, _sqlite_timestamp_diff)
-        create_deterministic_function('django_format_dtdelta', 3, _sqlite_format_dtdelta)
-        create_deterministic_function('regexp', 2, _sqlite_regexp)
-        create_deterministic_function('ACOS', 1, none_guard(math.acos))
-        create_deterministic_function('ASIN', 1, none_guard(math.asin))
-        create_deterministic_function('ATAN', 1, none_guard(math.atan))
-        create_deterministic_function('ATAN2', 2, none_guard(math.atan2))
-        create_deterministic_function('BITXOR', 2, none_guard(operator.xor))
-        create_deterministic_function('CEILING', 1, none_guard(math.ceil))
-        create_deterministic_function('COS', 1, none_guard(math.cos))
-        create_deterministic_function('COT', 1, none_guard(lambda x: 1 / math.tan(x)))
-        create_deterministic_function('DEGREES', 1, none_guard(math.degrees))
-        create_deterministic_function('EXP', 1, none_guard(math.exp))
-        create_deterministic_function('FLOOR', 1, none_guard(math.floor))
-        create_deterministic_function('LN', 1, none_guard(math.log))
-        create_deterministic_function('LOG', 2, none_guard(lambda x, y: math.log(y, x)))
-        create_deterministic_function('LPAD', 3, _sqlite_lpad)
-        create_deterministic_function('MD5', 1, none_guard(lambda x: md5(x.encode()).hexdigest()))
-        create_deterministic_function('MOD', 2, none_guard(math.fmod))
-        create_deterministic_function('PI', 0, lambda: math.pi)
-        create_deterministic_function('POWER', 2, none_guard(operator.pow))
-        create_deterministic_function('RADIANS', 1, none_guard(math.radians))
-        create_deterministic_function('REPEAT', 2, none_guard(operator.mul))
-        create_deterministic_function('REVERSE', 1, none_guard(lambda x: x[::-1]))
-        create_deterministic_function('RPAD', 3, _sqlite_rpad)
-        create_deterministic_function('SHA1', 1, none_guard(lambda x: hashlib.sha1(x.encode()).hexdigest()))
-        create_deterministic_function('SHA224', 1, none_guard(lambda x: hashlib.sha224(x.encode()).hexdigest()))
-        create_deterministic_function('SHA256', 1, none_guard(lambda x: hashlib.sha256(x.encode()).hexdigest()))
-        create_deterministic_function('SHA384', 1, none_guard(lambda x: hashlib.sha384(x.encode()).hexdigest()))
-        create_deterministic_function('SHA512', 1, none_guard(lambda x: hashlib.sha512(x.encode()).hexdigest()))
-        create_deterministic_function('SIGN', 1, none_guard(lambda x: (x > 0) - (x < 0)))
-        create_deterministic_function('SIN', 1, none_guard(math.sin))
-        create_deterministic_function('SQRT', 1, none_guard(math.sqrt))
-        create_deterministic_function('TAN', 1, none_guard(math.tan))
+        self.create_conn_functions(create_deterministic_function)
         # Don't use the built-in RANDOM() function because it returns a value
         # in the range [-1 * 2^63, 2^63 - 1] instead of [0, 1).
         conn.create_function('RAND', 0, random.random)
@@ -260,9 +271,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         conn.create_aggregate('VAR_SAMP', 1, list_aggregate(statistics.variance))
         conn.execute('PRAGMA foreign_keys = ON')
         return conn
-
-    def init_connection_state(self):
-        pass
 
     def create_cursor(self, name=None):
         return self.connection.cursor(factory=SQLiteCursorWrapper)

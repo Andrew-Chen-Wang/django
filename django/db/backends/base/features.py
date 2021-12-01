@@ -1,8 +1,62 @@
+import asyncio
+
 from django.db import ProgrammingError
 from django.utils.functional import cached_property
 
 
 class BaseDatabaseFeatures:
+    """
+    To implement async features, if a feature requires awaitables, then define a
+    coroutine function with an "a" prefix to the feature's name. When grabbing the
+    attribute, never call with the "a" prefix. For example:
+
+    class Features(BaseDatabaseFeatures):
+        gis_enabled = False
+
+        @cached_property
+        def allows_group_by_pk(self):
+            ...
+
+        async def aallows_group_by_lob(self):
+            ...
+
+    >> f_async = Features(async_mode=True)
+    >> await f.allows_group_by_lob
+    >> await f.gis_enabled
+    >> await f.allows_group_by_pk  # Notice: do not use the "a" prefix ever
+
+    >> f_sync = Features(async_mode=False)
+    >> f.gis_enabled
+    >> f.allows_group_by_lob  # Raises AttributeError
+    >> f.allows_group_by_pk
+    """
+
+    awaitable_mode = False
+
+    class NotImplementedFeature:
+        pass
+
+    def _async_getattribute(self, name):
+        """
+        In async mode, await all features. The purpose of overriding this is to wrap
+        all values inside a Future for consistent property-like usage in async mode
+        since there is no async property decorator.
+        """
+        coro = self.__dict__.get(f"a{name}", default=self.NotImplementedFeature)
+        if coro == self.NotImplementedFeature:
+            value = asyncio.Future()
+            value.set_result(super().__getattribute__(name))
+        elif asyncio.iscoroutinefunction(coro):
+            value = coro()
+        else:
+            value = asyncio.Future()
+            value.set_result(coro)
+        return value
+
+    def __init__(self):
+        if self.awaitable_mode:
+            self.__getattribute__ = self._async_getattribute
+
     gis_enabled = False
     # Oracle can't group by LOB (large object) data types.
     allows_group_by_lob = True
@@ -357,6 +411,24 @@ class BaseDatabaseFeatures:
             count, = cursor.fetchone()
             cursor.execute('DROP TABLE ROLLBACK_TEST')
         return count == 0
+
+    _asupports_transactions_cache = None
+
+    async def asupports_transactions(self):
+        """See supports_transactions()."""
+        if self._asupports_transactions_cache is not None:
+            return self._asupports_transactions_cache
+        async with self.connection.acursor() as cursor:
+            await cursor.execute('CREATE TABLE ROLLBACK_TEST (X INT)')
+            await self.connection.aset_autocommit(False)
+            await cursor.execute('INSERT INTO ROLLBACK_TEST (X) VALUES (8)')
+            await self.connection.arollback()
+            await self.connection.aset_autocommit(True)
+            await cursor.execute('SELECT COUNT(X) FROM ROLLBACK_TEST')
+            count, = await cursor.fetchone()
+            await cursor.execute('DROP TABLE ROLLBACK_TEST')
+        self._asupports_transactions_cache = count == 0
+        return self._asupports_transactions_cache
 
     def allows_group_by_selected_pks_on_model(self, model):
         if not self.allows_group_by_selected_pks:

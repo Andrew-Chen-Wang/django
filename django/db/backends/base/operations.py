@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import decimal
 from importlib import import_module
@@ -246,6 +247,7 @@ class BaseDatabaseOperations:
         # Convert params to contain string values.
         def to_string(s):
             return force_str(s, strings_only=True, errors='replace')
+
         if isinstance(params, (list, tuple)):
             u_params = tuple(to_string(val) for val in params)
         elif params is None:
@@ -254,6 +256,10 @@ class BaseDatabaseOperations:
             u_params = {to_string(k): to_string(v) for k, v in params.items()}
 
         return "QUERY = %r - PARAMS = %r" % (sql, u_params)
+
+    async def alast_executed_query(self, cursor, sql, params):
+        """See last_executed_query()"""
+        return self.last_executed_query(cursor, sql, params)
 
     def last_insert_id(self, cursor, table_name, pk_name):
         """
@@ -412,6 +418,15 @@ class BaseDatabaseOperations:
             with self.connection.cursor() as cursor:
                 for sql in sql_list:
                     cursor.execute(sql)
+
+    async def aexecute_sql_flush(self, sql_list):
+        """See execute_sql_flush()."""
+        async with transaction.atomic(
+            using=self.connection.alias,
+            savepoint=await self.connection.features.can_rollback_ddl,
+        ):
+            async with self.connection.acursor() as cursor:
+                await asyncio.gather(*(cursor.aexecute(sql) for sql in sql_list))
 
     def sequence_reset_by_name_sql(self, style, sequences):
         """
@@ -656,6 +671,13 @@ class BaseDatabaseOperations:
 
     def subtract_temporals(self, internal_type, lhs, rhs):
         if self.connection.features.supports_temporal_subtraction:
+            lhs_sql, lhs_params = lhs
+            rhs_sql, rhs_params = rhs
+            return '(%s - %s)' % (lhs_sql, rhs_sql), (*lhs_params, *rhs_params)
+        raise NotSupportedError("This backend does not support %s subtraction." % internal_type)
+
+    async def asubtract_temporals(self, internal_type, lhs, rhs):
+        if await self.connection.features.supports_temporal_subtraction:
             lhs_sql, lhs_params = lhs
             rhs_sql, rhs_params = rhs
             return '(%s - %s)' % (lhs_sql, rhs_sql), (*lhs_params, *rhs_params)

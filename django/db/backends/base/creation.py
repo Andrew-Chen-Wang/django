@@ -20,11 +20,15 @@ class BaseDatabaseCreation:
     Encapsulate backend-specific differences pertaining to creation and
     destruction of the test database.
     """
+
     def __init__(self, connection):
         self.connection = connection
 
     def _nodb_cursor(self):
         return self.connection._nodb_cursor()
+
+    async def _anodb_cursor(self):
+        return await self.connection._anodb_cursor()
 
     def log(self, msg):
         sys.stderr.write(msg + os.linesep)

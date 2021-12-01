@@ -3,7 +3,7 @@ import decimal
 import functools
 import logging
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 from django.db import NotSupportedError
 from django.utils.crypto import md5
@@ -33,12 +33,22 @@ class CursorWrapper:
     def __enter__(self):
         return self
 
+    async def __aenter__(self):
+        return self
+
     def __exit__(self, type, value, traceback):
         # Close instead of passing through to avoid backend-specific behavior
         # (#17671). Catch errors liberally because errors in cleanup code
         # aren't useful.
         try:
             self.close()
+        except self.db.Database.Error:
+            pass
+
+    async def __aexit__(self, type, value, traceback):
+        """See __exit__()."""
+        try:
+            await self.aclose()
         except self.db.Database.Error:
             pass
 
@@ -66,10 +76,22 @@ class CursorWrapper:
     def execute(self, sql, params=None):
         return self._execute_with_wrappers(sql, params, many=False, executor=self._execute)
 
+    async def aexecute(self, sql, params=None):
+        return await self._aexecute_with_wrappers(sql, params, many=False, executor=self._execute)
+
     def executemany(self, sql, param_list):
         return self._execute_with_wrappers(sql, param_list, many=True, executor=self._executemany)
 
+    async def aexecutemany(self, sql, param_list):
+        return await self._aexecute_with_wrappers(sql, param_list, many=True, executor=self._executemany)
+
     def _execute_with_wrappers(self, sql, params, many, executor):
+        context = {'connection': self.db, 'cursor': self}
+        for wrapper in reversed(self.db.execute_wrappers):
+            executor = functools.partial(wrapper, executor)
+        return executor(sql, params, many, context)
+
+    async def _aexecute_with_wrappers(self, sql, params, many, executor):
         context = {'connection': self.db, 'cursor': self}
         for wrapper in reversed(self.db.execute_wrappers):
             executor = functools.partial(wrapper, executor)
@@ -84,10 +106,24 @@ class CursorWrapper:
             else:
                 return self.cursor.execute(sql, params)
 
+    async def _aexecute(self, sql, params, *ignored_wrapper_args):
+        self.db.validate_no_broken_transaction()
+        with self.db.wrap_database_errors:
+            if params is None:
+                # params default might be backend specific.
+                return await self.cursor.execute(sql)
+            else:
+                return await self.cursor.execute(sql, params)
+
     def _executemany(self, sql, param_list, *ignored_wrapper_args):
         self.db.validate_no_broken_transaction()
         with self.db.wrap_database_errors:
             return self.cursor.executemany(sql, param_list)
+
+    async def _aexecutemany(self, sql, param_list, *ignored_wrapper_args):
+        self.db.validate_no_broken_transaction()
+        with self.db.wrap_database_errors:
+            return await self.cursor.executemany(sql, param_list)
 
 
 class CursorDebugWrapper(CursorWrapper):
@@ -98,9 +134,36 @@ class CursorDebugWrapper(CursorWrapper):
         with self.debug_sql(sql, params, use_last_executed_query=True):
             return super().execute(sql, params)
 
+    async def aexecute(self, sql, params=None):
+        async with self.adebug_sql(sql, params, use_last_executed_query=True):
+            return super().execute(sql, params)
+
     def executemany(self, sql, param_list):
         with self.debug_sql(sql, param_list, many=True):
             return super().executemany(sql, param_list)
+
+    async def aexecutemany(self, sql, param_list):
+        async with self.adebug_sql(sql, param_list, many=True):
+            return super().aexecutemany(sql, param_list)
+
+    def _log(self, sql, params, many, duration):
+        try:
+            times = len(params) if many else ''
+        except TypeError:
+            # params could be an iterator.
+            times = '?'
+        self.db.queries_log.append({
+            'sql': '%s times: %s' % (times, sql) if many else sql,
+            'time': '%.3f' % duration,
+        })
+        logger.debug(
+            '(%.3f) %s; args=%s; alias=%s',
+            duration,
+            sql,
+            params,
+            self.db.alias,
+            extra={'duration': duration, 'sql': sql, 'params': params, 'alias': self.db.alias},
+        )
 
     @contextmanager
     def debug_sql(self, sql=None, params=None, use_last_executed_query=False, many=False):
@@ -112,23 +175,19 @@ class CursorDebugWrapper(CursorWrapper):
             duration = stop - start
             if use_last_executed_query:
                 sql = self.db.ops.last_executed_query(self.cursor, sql, params)
-            try:
-                times = len(params) if many else ''
-            except TypeError:
-                # params could be an iterator.
-                times = '?'
-            self.db.queries_log.append({
-                'sql': '%s times: %s' % (times, sql) if many else sql,
-                'time': '%.3f' % duration,
-            })
-            logger.debug(
-                '(%.3f) %s; args=%s; alias=%s',
-                duration,
-                sql,
-                params,
-                self.db.alias,
-                extra={'duration': duration, 'sql': sql, 'params': params, 'alias': self.db.alias},
-            )
+            self._log(sql, params, many, duration)
+
+    @asynccontextmanager
+    async def adebug_sql(self, sql=None, params=None, use_last_executed_query=False, many=False):
+        start = time.monotonic()
+        try:
+            yield
+        finally:
+            stop = time.monotonic()
+            duration = stop - start
+            if use_last_executed_query:
+                sql = await self.db.ops.alast_executed_query(self.cursor, sql, params)
+            self._log(sql, params, many, duration)
 
 
 def split_tzname_delta(tzname):

@@ -212,6 +212,38 @@ class Atomic(ContextDecorator):
         if connection.in_atomic_block:
             connection.atomic_blocks.append(self)
 
+    async def __aenter__(self):
+        connection = get_connection(self.using)
+
+        if (
+            self.durable and
+            connection.atomic_blocks and
+            not connection.atomic_blocks[-1]._from_testcase
+        ):
+            raise RuntimeError(
+                'A durable atomic block cannot be nested within another '
+                'atomic block.'
+            )
+        if not connection.in_atomic_block:
+            connection.commit_on_exit = True
+            connection.needs_rollback = False
+            if not await connection.aget_autocommit():
+                connection.in_atomic_block = True
+                connection.commit_on_exit = False
+
+        if connection.in_atomic_block:
+            if self.savepoint and not connection.needs_rollback:
+                sid = await connection.asavepoint()
+                connection.savepoint_ids.append(sid)
+            else:
+                connection.savepoint_ids.append(None)
+        else:
+            await connection.aset_autocommit(False, force_begin_transaction_with_broken_autocommit=True)
+            connection.in_atomic_block = True
+
+        if connection.in_atomic_block:
+            connection.atomic_blocks.append(self)
+
     def __exit__(self, exc_type, exc_value, traceback):
         connection = get_connection(self.using)
 
@@ -297,6 +329,71 @@ class Atomic(ContextDecorator):
                 else:
                     connection.set_autocommit(True)
             # Outermost block exit when autocommit was disabled.
+            elif not connection.savepoint_ids and not connection.commit_on_exit:
+                if connection.closed_in_transaction:
+                    connection.connection = None
+                else:
+                    connection.in_atomic_block = False
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        connection = get_connection(self.using)
+
+        if connection.in_atomic_block:
+            connection.atomic_blocks.pop()
+
+        if connection.savepoint_ids:
+            sid = connection.savepoint_ids.pop()
+        else:
+            connection.in_atomic_block = False
+
+        try:
+            if connection.closed_in_transaction:
+                pass
+
+            elif exc_type is None and not connection.needs_rollback:
+                if connection.in_atomic_block:
+                    if sid is not None:
+                        try:
+                            await connection.asavepoint_commit(sid)
+                        except DatabaseError:
+                            try:
+                                await connection.asavepoint_rollback(sid)
+                                await connection.asavepoint_commit(sid)
+                            except Error:
+                                connection.needs_rollback = True
+                            raise
+                else:
+                    try:
+                        await connection.acommit()
+                    except DatabaseError:
+                        try:
+                            await connection.arollback()
+                        except Error:
+                            await connection.aclose()
+                        raise
+            else:
+                connection.needs_rollback = False
+                if connection.in_atomic_block:
+                    if sid is None:
+                        connection.needs_rollback = True
+                    else:
+                        try:
+                            await connection.asavepoint_rollback(sid)
+                            await connection.asavepoint_commit(sid)
+                        except Error:
+                            connection.needs_rollback = True
+                else:
+                    try:
+                        await connection.arollback()
+                    except Error:
+                        await connection.aclose()
+
+        finally:
+            if not connection.in_atomic_block:
+                if connection.closed_in_transaction:
+                    connection.connection = None
+                else:
+                    await connection.aset_autocommit(True)
             elif not connection.savepoint_ids and not connection.commit_on_exit:
                 if connection.closed_in_transaction:
                     connection.connection = None
