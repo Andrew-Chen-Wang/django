@@ -1243,6 +1243,57 @@ class SQLCompiler:
             return list(result)
         return result
 
+    async def aexecute_sql(self, result_type=MULTI, chunked_fetch=False, chunk_size=GET_ITERATOR_CHUNK_SIZE):
+        result_type = result_type or NO_RESULTS
+        try:
+            sql, params = self.as_sql()
+            if not sql:
+                raise EmptyResultSet
+        except EmptyResultSet:
+            if result_type == MULTI:
+                return iter([])
+            else:
+                return
+        if chunked_fetch:
+            cursor = await self.connection.achunked_cursor()
+        else:
+            cursor = await self.connection.acursor()
+        try:
+            await cursor.execute(sql, params)
+        except Exception:
+            # Might fail for server-side cursors (e.g. connection closed)
+            await cursor.close()
+            raise
+
+        if result_type == CURSOR:
+            # Give the caller the cursor to process and close.
+            return cursor
+        if result_type == SINGLE:
+            try:
+                val = cursor.fetchone()
+                if val:
+                    return val[0:self.col_count]
+                return val
+            finally:
+                # done with the cursor
+                cursor.close()
+        if result_type == NO_RESULTS:
+            cursor.close()
+            return
+
+        result = cursor_iter(
+            cursor, self.connection.features.empty_fetchmany_value,
+            self.col_count if self.has_extra_select else None,
+            chunk_size,
+        )
+        if not chunked_fetch or not self.connection.features.can_use_chunked_reads:
+            # If we are using non-chunked reads, we return the same data
+            # structure as normally, but ensure it is all read into memory
+            # before going any further. Use chunked_fetch if requested,
+            # unless the database doesn't support it.
+            return list(result)
+        return result
+
     def as_subquery_condition(self, alias, columns, compiler):
         qn = compiler.quote_name_unless_alias
         qn2 = self.connection.ops.quote_name

@@ -12,6 +12,7 @@ from django.db.models.expressions import Col
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.functional import cached_property
+from django.utils.lru_cache import alru_cache
 
 
 class DatabaseOperations(BaseDatabaseOperations):
@@ -82,6 +83,13 @@ class DatabaseOperations(BaseDatabaseOperations):
         statement into a table, return the list of returned data.
         """
         return cursor.fetchall()
+
+    def afetch_returned_insert_rows(self, cursor):
+        """
+        Given a cursor object that has just performed an INSERT...RETURNING
+        statement into a table, return the list of returned data.
+        """
+        return await cursor.fetchall()
 
     def format_for_duration_arithmetic(self, sql):
         """Do nothing since formatting is handled in the custom function."""
@@ -159,6 +167,33 @@ class DatabaseOperations(BaseDatabaseOperations):
         finally:
             cursor.close()
 
+    async def _aquote_params_for_last_executed_query(self, params):
+        """
+        Only for alast_executed_query! Don't use this to execute SQL queries!
+        """
+        # This function is limited both by SQLITE_LIMIT_VARIABLE_NUMBER (the
+        # number of parameters, default = 999) and SQLITE_MAX_COLUMN (the
+        # number of return values, default = 2000). Since Python's sqlite3
+        # module doesn't expose the get_limit() C API, assume the default
+        # limits are in effect and split the work in batches if needed.
+        BATCH_SIZE = 999
+        if len(params) > BATCH_SIZE:
+            results = ()
+            for index in range(0, len(params), BATCH_SIZE):
+                chunk = params[index:index + BATCH_SIZE]
+                results += await self._aquote_params_for_last_executed_query(chunk)
+            return results
+
+        sql = 'SELECT ' + ', '.join(['QUOTE(?)'] * len(params))
+        # Bypass Django's wrappers and use the underlying sqlite3 connection
+        # to avoid logging this query - it would trigger infinite recursion.
+        cursor = await self.connection.connection.acursor()
+        # Native sqlite3 cursors cannot be used as context managers.
+        try:
+            return await (await cursor.execute(sql, params)).fetchone()
+        finally:
+            await cursor.close()
+
     def last_executed_query(self, cursor, sql, params):
         # Python substitutes parameters in Modules/_sqlite/cursor.c with:
         # pysqlite_statement_bind_parameters(self->statement, parameters, allow_8bit_chars);
@@ -177,6 +212,24 @@ class DatabaseOperations(BaseDatabaseOperations):
         else:
             return sql
 
+    async def alast_executed_query(self, cursor, sql, params):
+        # Python substitutes parameters in Modules/_sqlite/cursor.c with:
+        # pysqlite_statement_bind_parameters(self->statement, parameters, allow_8bit_chars);
+        # Unfortunately there is no way to reach self->statement from Python,
+        # so we quote and substitute parameters manually.
+        if params:
+            if isinstance(params, (list, tuple)):
+                params = await self._aquote_params_for_last_executed_query(params)
+            else:
+                values = tuple(params.values())
+                values = await self._aquote_params_for_last_executed_query(values)
+                params = dict(zip(params, values))
+            return sql % params
+        # For consistency with SQLiteCursorWrapper.execute(), just return sql
+        # when there are no parameters. See #13648 and #17158.
+        else:
+            return sql
+
     def quote_name(self, name):
         if name.startswith('"') and name.endswith('"'):
             return name  # Quoting once is enough.
@@ -185,24 +238,32 @@ class DatabaseOperations(BaseDatabaseOperations):
     def no_limit_value(self):
         return -1
 
-    def __references_graph(self, table_name):
+    def __references_graph_query_params(self, table_name):
         query = """
-        WITH tables AS (
-            SELECT %s name
-            UNION
-            SELECT sqlite_master.name
-            FROM sqlite_master
-            JOIN tables ON (sql REGEXP %s || tables.name || %s)
-        ) SELECT name FROM tables;
-        """
+                WITH tables AS (
+                    SELECT %s name
+                    UNION
+                    SELECT sqlite_master.name
+                    FROM sqlite_master
+                    JOIN tables ON (sql REGEXP %s || tables.name || %s)
+                ) SELECT name FROM tables;
+                """
         params = (
             table_name,
             r'(?i)\s+references\s+("|\')?',
             r'("|\')?\s*\(',
         )
+        return (query, params)
+
+    def __references_graph(self, table_name):
         with self.connection.cursor() as cursor:
-            results = cursor.execute(query, params)
+            results = cursor.execute(*self.__references_graph_query_params(table_name))
             return [row[0] for row in results.fetchall()]
+
+    def __areferences_graph(self, table_name):
+        async with self.connection.acursor() as cursor:
+            results = await cursor.execute(*self.__references_graph_query_params(table_name))
+            return [row[0] for row in await results.fetchall()]
 
     @cached_property
     def _references_graph(self):
@@ -210,11 +271,12 @@ class DatabaseOperations(BaseDatabaseOperations):
         # Django's test suite.
         return lru_cache(maxsize=512)(self.__references_graph)
 
-    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
-        if tables and allow_cascade:
-            # Simulate TRUNCATE CASCADE by recursively collecting the tables
-            # referencing the tables to be flushed.
-            tables = set(chain.from_iterable(self._references_graph(table) for table in tables))
+    @cached_property
+    def _areferences_graph(self):
+        """See _references_graph()."""
+        return alru_cache(maxsize=512)(self.__areferences_graph)
+
+    def __sql_flush_sql(self, style, tables, reset_sequences):
         sql = ['%s %s %s;' % (
             style.SQL_KEYWORD('DELETE'),
             style.SQL_KEYWORD('FROM'),
@@ -224,6 +286,18 @@ class DatabaseOperations(BaseDatabaseOperations):
             sequences = [{'table': table} for table in tables]
             sql.extend(self.sequence_reset_by_name_sql(style, sequences))
         return sql
+
+    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
+        if tables and allow_cascade:
+            # Simulate TRUNCATE CASCADE by recursively collecting the tables
+            # referencing the tables to be flushed.
+            tables = set(chain.from_iterable(self._references_graph(table) for table in tables))
+        return self.__sql_flush_sql(style, tables, reset_sequences)
+
+    def asql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
+        if tables and allow_cascade:
+            tables = set(chain.from_iterable(await self._areferences_graph(table) for table in tables))
+        return self.__sql_flush_sql(style, tables, reset_sequences)
 
     def sequence_reset_by_name_sql(self, style, sequences):
         if not sequences:

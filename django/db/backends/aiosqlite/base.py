@@ -14,7 +14,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
 from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.backends.sqlite3.base import (
-    BaseSQLiteDatabaseWrapper, decoder, list_aggregate, FORMAT_QMARK_REGEX
+    FORMAT_QMARK_REGEX, BaseSQLiteDatabaseWrapper, decoder, list_aggregate,
 )
 from django.utils.dateparse import parse_datetime, parse_time
 
@@ -59,7 +59,7 @@ class DatabaseWrapper(BaseSQLiteDatabaseWrapper):
             conn.create_function,
             deterministic=True,
         )
-        await asyncio.gather(self.create_conn_functions(create_deterministic_function))
+        await asyncio.gather(*self.create_conn_functions(create_deterministic_function))
         # Don't use the built-in RANDOM() function because it returns a value
         # in the range [-1 * 2^63, 2^63 - 1] instead of [0, 1).
         await conn.create_function('RAND', 0, random.random)
@@ -215,13 +215,13 @@ class SQLiteCursorWrapper(Database.Cursor):
     you'll need to use "%%s".
     """
 
-    async def aexecute(self, query, params=None):
+    async def execute(self, query, params=None):
         if params is None:
             return await Database.Cursor.execute(self, query)
         query = self.convert_query(query)
         return await Database.Cursor.execute(self, query, params)
 
-    async def aexecutemany(self, query, param_list):
+    async def executemany(self, query, param_list):
         query = self.convert_query(query)
         return await Database.Cursor.executemany(self, query, param_list)
 

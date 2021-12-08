@@ -115,7 +115,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         async with self.connection.acursor() as cursor:
             try:
                 async with transaction.atomic(self.connection.alias):
-                    await cursor.aexecute('SELECT JSON(\'{"a": "b"}\')')
+                    await cursor.execute('SELECT JSON(\'{"a": "b"}\')')
             except OperationalError:
                 return False
         return True

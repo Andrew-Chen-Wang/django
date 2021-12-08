@@ -42,6 +42,14 @@ class BaseIterable:
 class ModelIterable(BaseIterable):
     """Iterable that yields a model instance for each row."""
 
+    async def __aiter__(self):
+        queryset = self.queryset
+        db = queryset.db
+        compiler = queryset.query.get_compiler(using=db)
+        # Execute the query. This will also fill compiler.select, klass_info,
+        # and annotations.
+        _ = await compiler.aexecute_sql(chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size)
+
     def __iter__(self):
         queryset = self.queryset
         db = queryset.db
@@ -448,6 +456,21 @@ class QuerySet:
                 num if not limit or num < limit else 'more than %s' % (limit - 1),
             )
         )
+
+    async def aget(self, *args, **kwargs):
+        if self.query.combinator and (args or kwargs):
+            raise NotSupportedError(
+                'Calling QuerySet.aget(...) with filters after %s() is not '
+                'supported.' % self.query.combinator
+            )
+        clone = self._chain() if self.query.combinator else self.filter(*args, **kwargs)
+        if self.query.can_filter() and not self.query.distinct_fields:
+            clone = clone.order_by()
+        limit = None
+        if not clone.query.select_for_update or connections[clone.db].features.supports_select_for_update_with_limit:
+            limit = MAX_GET_RESULTS
+            clone.query.set_limits(high=limit)
+        self._fetch_all()
 
     def create(self, **kwargs):
         """
