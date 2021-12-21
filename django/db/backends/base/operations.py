@@ -722,3 +722,25 @@ class BaseDatabaseOperations:
 
     def ignore_conflicts_suffix_sql(self, ignore_conflicts=None):
         return ''
+
+
+class BaseAsyncDatabaseOperations(BaseDatabaseOperations):
+    async def last_insert_id(self, cursor, table_name, pk_name):
+        return super().last_insert_id(cursor, table_name, pk_name)
+
+    async def last_executed_query(self, cursor, sql, params):
+        return super().last_executed_query(cursor, sql, params)
+
+    async def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
+        return super().sql_flush(style, tables, reset_sequences=reset_sequences, allow_cascade=allow_cascade)
+
+    async def execute_sql_flush(self, sql_list):
+        """See BaseDatabaseOperations.exceute_sql_flush()."""
+        async with transaction.atomic(
+            using=self.connection.alias,
+            savepoint=self.connection.features.can_rollback_ddl,
+            is_async=True,
+        ):
+            with await self.connection.cursor() as cursor:
+                for sql in sql_list:
+                    await cursor.execute(sql)
