@@ -355,15 +355,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 return ['DESC' if info.endswith('DESC') else 'ASC' for info in columns]
         return None
 
-    def _get_column_collations(self, cursor, table_name):
-        row = cursor.execute("""
-            SELECT sql
-            FROM sqlite_master
-            WHERE type = 'table' AND name = %s
-        """, [table_name]).fetchone()
-        if not row:
-            return {}
-
+    @staticmethod
+    def _process_collations(row):
         sql = row[0]
         columns = str(sqlparse.parse(sql)[0][-1]).strip('()').split(', ')
         collations = {}
@@ -378,3 +371,11 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 collation = None
             collations[column_name] = collation
         return collations
+
+    def _get_column_collations(self, cursor, table_name):
+        row = cursor.execute("""
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = %s
+        """, [table_name]).fetchone()
+        return self._process_collations(row) if row else {}
