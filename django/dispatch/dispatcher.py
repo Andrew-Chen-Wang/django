@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import threading
 import weakref
 
+from django.utils.asyncio import async_unsafe
 from django.utils.inspect import func_accepts_kwargs
 
 logger = logging.getLogger('django.dispatch')
@@ -34,6 +36,7 @@ class Signal:
         """
         self.receivers = []
         self.lock = threading.Lock()
+        self.async_lock = asyncio.Lock()
         self.use_caching = use_caching
         # For convenience we create empty caches even if they are not used.
         # A note about caching: if use_caching is defined, then for each
@@ -43,6 +46,44 @@ class Signal:
         self.sender_receivers_cache = weakref.WeakKeyDictionary() if use_caching else {}
         self._dead_receivers = False
 
+    def _make_lookup_key(self, receiver, sender, dispatch_uid):
+        if dispatch_uid:
+            return dispatch_uid, _make_id(sender)
+        else:
+            return _make_id(receiver), _make_id(sender)
+
+    def _init_connect(self, receiver, sender, weak, dispatch_uid):
+        from django.conf import settings
+
+        # If DEBUG is on, check that we got a good receiver
+        if settings.configured and settings.DEBUG:
+            if not callable(receiver):
+                raise TypeError('Signal receivers must be callable.')
+            # Check for **kwargs
+            if not func_accepts_kwargs(receiver):
+                raise ValueError("Signal receivers must accept keyword arguments (**kwargs).")
+
+        lookup_key = self._make_lookup_key(receiver, sender, dispatch_uid)
+
+        if weak:
+            ref = weakref.ref
+            receiver_object = receiver
+            # Check for bound methods
+            if hasattr(receiver, '__self__') and hasattr(receiver, '__func__'):
+                ref = weakref.WeakMethod
+                receiver_object = receiver.__self__
+            receiver = ref(receiver)
+            weakref.finalize(receiver_object, self._remove_receiver)
+
+        return receiver, lookup_key
+
+    def _connect_cleanup(self, receiver, lookup_key):
+        self._clear_dead_receivers()
+        if not any(r_key == lookup_key for r_key, _ in self.receivers):
+            self.receivers.append((lookup_key, receiver))
+        self.sender_receivers_cache.clear()
+
+    @async_unsafe
     def connect(self, receiver, sender=None, weak=True, dispatch_uid=None):
         """
         Connect receiver to sender for signal.
@@ -76,37 +117,31 @@ class Signal:
                 a receiver. This will usually be a string, though it may be
                 anything hashable.
         """
-        from django.conf import settings
-
-        # If DEBUG is on, check that we got a good receiver
-        if settings.configured and settings.DEBUG:
-            if not callable(receiver):
-                raise TypeError('Signal receivers must be callable.')
-            # Check for **kwargs
-            if not func_accepts_kwargs(receiver):
-                raise ValueError("Signal receivers must accept keyword arguments (**kwargs).")
-
-        if dispatch_uid:
-            lookup_key = (dispatch_uid, _make_id(sender))
-        else:
-            lookup_key = (_make_id(receiver), _make_id(sender))
-
-        if weak:
-            ref = weakref.ref
-            receiver_object = receiver
-            # Check for bound methods
-            if hasattr(receiver, '__self__') and hasattr(receiver, '__func__'):
-                ref = weakref.WeakMethod
-                receiver_object = receiver.__self__
-            receiver = ref(receiver)
-            weakref.finalize(receiver_object, self._remove_receiver)
+        receiver, lookup_key = self._init_connect(receiver, sender, weak, dispatch_uid)
 
         with self.lock:
-            self._clear_dead_receivers()
-            if not any(r_key == lookup_key for r_key, _ in self.receivers):
-                self.receivers.append((lookup_key, receiver))
-            self.sender_receivers_cache.clear()
+            self._connect_cleanup(receiver, lookup_key)
 
+    async def aconnect(self, receiver, sender=None, weak=True, dispatch_uid=None):
+        """See connect()."""
+        receiver, lookup_key = self._init_connect(receiver, sender, weak, dispatch_uid)
+
+        async with self.async_lock:
+            self._connect_cleanup(receiver, lookup_key)
+
+    def _disconnect_cleanup(self, lookup_key):
+        disconnected = False
+        self._clear_dead_receivers()
+        for index in range(len(self.receivers)):
+            (r_key, _) = self.receivers[index]
+            if r_key == lookup_key:
+                disconnected = True
+                del self.receivers[index]
+                break
+        self.sender_receivers_cache.clear()
+        return disconnected
+
+    @async_unsafe
     def disconnect(self, receiver=None, sender=None, dispatch_uid=None):
         """
         Disconnect receiver from sender for signal.
@@ -126,22 +161,17 @@ class Signal:
             dispatch_uid
                 the unique identifier of the receiver to disconnect
         """
-        if dispatch_uid:
-            lookup_key = (dispatch_uid, _make_id(sender))
-        else:
-            lookup_key = (_make_id(receiver), _make_id(sender))
+        lookup_key = self._make_lookup_key(receiver, sender, dispatch_uid)
 
-        disconnected = False
         with self.lock:
-            self._clear_dead_receivers()
-            for index in range(len(self.receivers)):
-                (r_key, _) = self.receivers[index]
-                if r_key == lookup_key:
-                    disconnected = True
-                    del self.receivers[index]
-                    break
-            self.sender_receivers_cache.clear()
-        return disconnected
+            return self._disconnect_cleanup(lookup_key)
+
+    async def adisconnect(self, receiver=None, sender=None, dispatch_uid=None):
+        """See disconnect()."""
+        lookup_key = self._make_lookup_key(receiver, sender, dispatch_uid)
+
+        async with self.async_lock:
+            return self._disconnect_cleanup(lookup_key)
 
     def has_listeners(self, sender=None):
         return bool(self._live_receivers(sender))
@@ -169,6 +199,26 @@ class Signal:
 
         return [
             (receiver, receiver(signal=self, sender=sender, **named))
+            for receiver in self._live_receivers(sender)
+        ]
+
+    async def asend(self, sender, **named):
+        """
+        See send().
+
+        Execute each receiver one-at-a-time in case of unwanted clogging
+        (e.g. database connections could increase 10-fold and crash a database).
+        """
+        if not self.receivers or self.sender_receivers_cache.get(sender) is NO_RECEIVERS:
+            return []
+
+        return [
+            (
+                receiver,
+                await receiver(signal=self, sender=sender, **named)
+                if asyncio.iscoroutinefunction(receiver)
+                else receiver(signal=self, sender=sender, **named)
+            )
             for receiver in self._live_receivers(sender)
         ]
 
@@ -212,15 +262,69 @@ class Signal:
                 responses.append((receiver, response))
         return responses
 
+    async def asend_robust(self, sender, **named):
+        """
+        See send_robust().
+
+        Execute each receiver one-at-a-time in case of unwanted clogging
+        (e.g. database connections could increase 10-fold and crash a database).
+        """
+        if not self.receivers or self.sender_receivers_cache.get(sender) is NO_RECEIVERS:
+            return []
+
+        responses = []
+        for receiver in await self._alive_receivers(sender):
+            try:
+                response = (
+                    await receiver(signal=self, sender=sender, **named)
+                    if asyncio.iscoroutinefunction(receiver)
+                    else receiver(signal=self, sender=sender, **named)
+                )
+            except Exception as err:
+                logger.error(
+                    'Error calling %s in Signal.asend_robust() (%s)',
+                    receiver.__qualname__,
+                    err,
+                    exc_info=err,
+                )
+                responses.append((receiver, err))
+            else:
+                responses.append((receiver, response))
+        return responses
+
     def _clear_dead_receivers(self):
         # Note: caller is assumed to hold self.lock.
         if self._dead_receivers:
             self._dead_receivers = False
             self.receivers = [
                 r for r in self.receivers
-                if not(isinstance(r[1], weakref.ReferenceType) and r[1]() is None)
+                if not (isinstance(r[1], weakref.ReferenceType) and r[1]() is None)
             ]
 
+    def _get_non_weak_receiver(self, receivers):
+        non_weak_receivers = []
+        for receiver in receivers:
+            if isinstance(receiver, weakref.ReferenceType):
+                # Dereference the weak reference.
+                receiver = receiver()
+                if receiver is not None:
+                    non_weak_receivers.append(receiver)
+            else:
+                non_weak_receivers.append(receiver)
+        return non_weak_receivers
+
+    def _filter_live_receivers(self, receivers, senderkey, sender):
+        for (receiverkey, r_senderkey), receiver in self.receivers:
+            if r_senderkey == NONE_ID or r_senderkey == senderkey:
+                receivers.append(receiver)
+        if self.use_caching:
+            if not receivers:
+                self.sender_receivers_cache[sender] = NO_RECEIVERS
+            else:
+                # Note, we must cache the weakref versions.
+                self.sender_receivers_cache[sender] = receivers
+
+    @async_unsafe
     def _live_receivers(self, sender):
         """
         Filter sequence of receivers to get resolved, live receivers.
@@ -238,27 +342,23 @@ class Signal:
         if receivers is None:
             with self.lock:
                 self._clear_dead_receivers()
-                senderkey = _make_id(sender)
                 receivers = []
-                for (receiverkey, r_senderkey), receiver in self.receivers:
-                    if r_senderkey == NONE_ID or r_senderkey == senderkey:
-                        receivers.append(receiver)
-                if self.use_caching:
-                    if not receivers:
-                        self.sender_receivers_cache[sender] = NO_RECEIVERS
-                    else:
-                        # Note, we must cache the weakref versions.
-                        self.sender_receivers_cache[sender] = receivers
-        non_weak_receivers = []
-        for receiver in receivers:
-            if isinstance(receiver, weakref.ReferenceType):
-                # Dereference the weak reference.
-                receiver = receiver()
-                if receiver is not None:
-                    non_weak_receivers.append(receiver)
-            else:
-                non_weak_receivers.append(receiver)
-        return non_weak_receivers
+                self._filter_live_receivers(receivers, _make_id(sender), sender)
+        return self._get_non_weak_receiver(receivers)
+
+    async def _alive_receivers(self, sender):
+        """See _live_receivers()."""
+        receivers = None
+        if self.use_caching and not self._dead_receivers:
+            receivers = self.sender_receivers_cache.get(sender)
+            if receivers is NO_RECEIVERS:
+                return []
+        if receivers is None:
+            async with self.async_lock:
+                self._clear_dead_receivers()
+                receivers = []
+                self._filter_live_receivers(receivers, _make_id(sender), sender)
+        return self._get_non_weak_receiver(receivers)
 
     def _remove_receiver(self, receiver=None):
         # Mark that the self.receivers list has dead weakrefs. If so, we will
@@ -270,6 +370,7 @@ class Signal:
         self._dead_receivers = True
 
 
+@async_unsafe
 def receiver(signal, **kwargs):
     """
     A decorator for connecting receivers to signals. Used by passing in the

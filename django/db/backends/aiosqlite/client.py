@@ -1,7 +1,7 @@
-from django.db.backends.base.client import BaseDatabaseClient
+from django.db.backends.base.client import BaseAsyncDatabaseClient
 
 
-class DatabaseClient(BaseDatabaseClient):
+class DatabaseClient(BaseAsyncDatabaseClient):
     executable_name = 'sqlite3'
 
     @classmethod
