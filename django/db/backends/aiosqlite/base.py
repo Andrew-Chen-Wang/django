@@ -23,7 +23,6 @@ from .creation import DatabaseCreation
 from .features import DatabaseFeatures
 from .introspection import DatabaseIntrospection
 from .operations import DatabaseOperations
-from .schema import DatabaseSchemaEditor
 
 
 def check_sqlite_version():
@@ -45,7 +44,6 @@ Database.register_adapter(decimal.Decimal, str)
 
 class DatabaseWrapper(SQLiteDatabaseWrapper, BaseAsyncDatabaseWrapper):
     Database = Database
-    SchemaEditorClass = DatabaseSchemaEditor
     # Classes instantiated in __init__().
     client_class = DatabaseClient
     creation_class = DatabaseCreation
